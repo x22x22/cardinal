@@ -3,12 +3,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 import { TrayIcon, type TrayIconOptions } from '@tauri-apps/api/tray';
 import i18n from './i18n/config';
-import { QUICK_LAUNCH_SHORTCUT } from './utils/globalShortcuts';
+import { getStoredWindowActivationShortcut } from './windowActivationShortcutPreference';
 
 const TRAY_ID = 'cardinal.tray';
 
 let trayInitPromise: Promise<void> | null = null;
 let trayIcon: TrayIcon | null = null;
+let openMenuItem: MenuItem | null = null;
 
 export function initializeTray(): Promise<void> {
   if (!trayInitPromise) {
@@ -38,19 +39,26 @@ export async function setTrayEnabled(enabled: boolean): Promise<void> {
 
   const current = trayIcon;
   trayIcon = null;
+  openMenuItem = null;
 
   await Promise.allSettled([current?.close(), TrayIcon.removeById(TRAY_ID)]);
 }
 
+export async function updateTrayOpenAccelerator(shortcut: string): Promise<void> {
+  await openMenuItem?.setAccelerator(shortcut || null);
+}
+
 async function createTray(): Promise<void> {
+  const shortcut = getStoredWindowActivationShortcut();
   const openItem = await MenuItem.new({
     id: 'tray.open',
     text: i18n.t('tray.open'),
-    accelerator: QUICK_LAUNCH_SHORTCUT,
+    accelerator: shortcut || undefined,
     action: () => {
       void activateMainWindow();
     },
   });
+  openMenuItem = openItem;
   const menu = await Menu.new({
     items: [
       openItem,

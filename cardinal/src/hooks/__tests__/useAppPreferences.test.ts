@@ -5,7 +5,12 @@ import { applyThemePreference, persistThemePreference } from '../../theme';
 import { setTrayEnabled } from '../../tray';
 import { getStoredTrayIconEnabled, persistTrayIconEnabled } from '../../trayIconPreference';
 import { setWatchConfig } from '../../utils/watchConfig';
+import { setWindowActivationShortcut } from '../../utils/globalShortcuts';
 import { getBrowserLanguage } from '../../i18n/config';
+import {
+  getStoredWindowActivationShortcut,
+  persistWindowActivationShortcut,
+} from '../../windowActivationShortcutPreference';
 import { useIgnorePaths } from '../useIgnorePaths';
 import { useWatchRoot } from '../useWatchRoot';
 import { useAppPreferences } from '../useAppPreferences';
@@ -30,6 +35,7 @@ vi.mock('../../trayIconPreference', () => ({
 
 vi.mock('../../tray', () => ({
   setTrayEnabled: vi.fn(),
+  updateTrayOpenAccelerator: vi.fn(),
 }));
 
 vi.mock('../../theme', () => ({
@@ -39,6 +45,19 @@ vi.mock('../../theme', () => ({
 
 vi.mock('../../utils/watchConfig', () => ({
   setWatchConfig: vi.fn(),
+}));
+
+vi.mock('../../utils/globalShortcuts', () => ({
+  setWindowActivationShortcut: vi.fn(),
+}));
+
+vi.mock('../../windowActivationShortcutPreference', () => ({
+  getStoredWindowActivationShortcut: vi.fn(),
+  validateWindowActivationShortcut: (shortcut: string) => ({
+    isValid: true,
+    normalizedShortcut: shortcut.trim(),
+  }),
+  persistWindowActivationShortcut: vi.fn(),
 }));
 
 vi.mock('../../i18n/config', () => ({
@@ -54,7 +73,10 @@ const mockedSetTrayEnabled = vi.mocked(setTrayEnabled);
 const mockedPersistThemePreference = vi.mocked(persistThemePreference);
 const mockedApplyThemePreference = vi.mocked(applyThemePreference);
 const mockedSetWatchConfig = vi.mocked(setWatchConfig);
+const mockedSetWindowActivationShortcut = vi.mocked(setWindowActivationShortcut);
 const mockedGetBrowserLanguage = vi.mocked(getBrowserLanguage);
+const mockedGetStoredWindowActivationShortcut = vi.mocked(getStoredWindowActivationShortcut);
+const mockedPersistWindowActivationShortcut = vi.mocked(persistWindowActivationShortcut);
 
 describe('useAppPreferences', () => {
   const setWatchRoot = vi.fn();
@@ -78,8 +100,29 @@ describe('useAppPreferences', () => {
     mockedGetStoredTrayIconEnabled.mockReturnValue(true);
     mockedSetTrayEnabled.mockResolvedValue(undefined);
     mockedSetWatchConfig.mockResolvedValue(undefined);
+    mockedSetWindowActivationShortcut.mockResolvedValue(undefined);
     mockedInvoke.mockResolvedValue(undefined);
     mockedGetBrowserLanguage.mockReturnValue('fr-FR');
+    mockedGetStoredWindowActivationShortcut.mockReturnValue('');
+  });
+
+  it('updates window activation shortcut preference', async () => {
+    const { result } = renderHook(() =>
+      useAppPreferences({
+        fullDiskAccessStatus: 'denied',
+        isCheckingFullDiskAccess: false,
+        refreshSearchResults,
+        i18n: { changeLanguage },
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleWindowActivationShortcutChange(' Command+Shift+K ');
+    });
+
+    expect(mockedSetWindowActivationShortcut).toHaveBeenCalledWith('Command+Shift+K');
+    expect(mockedPersistWindowActivationShortcut).toHaveBeenCalledWith('Command+Shift+K');
+    expect(result.current.windowActivationShortcut).toBe('Command+Shift+K');
   });
 
   it('starts logic once when permission is granted', async () => {
@@ -370,6 +413,10 @@ describe('useAppPreferences', () => {
       expect(mockedSetTrayEnabled).toHaveBeenCalledWith(false);
     });
     expect(mockedPersistTrayIconEnabled).toHaveBeenCalledWith(false);
+    await waitFor(() => {
+      expect(mockedSetWindowActivationShortcut).toHaveBeenCalledWith('');
+    });
+    expect(mockedPersistWindowActivationShortcut).toHaveBeenCalledWith('');
     expect(mockedPersistThemePreference).toHaveBeenCalledWith('system');
     expect(mockedApplyThemePreference).toHaveBeenCalledWith('system');
     expect(changeLanguage).toHaveBeenCalledWith('fr-FR');
