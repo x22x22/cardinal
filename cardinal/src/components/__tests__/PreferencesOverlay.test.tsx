@@ -66,6 +66,34 @@ describe('PreferencesOverlay', () => {
     });
   });
 
+  it('accepts glob-style ignore patterns', () => {
+    const onWatchConfigChange = vi.fn();
+    render(<PreferencesOverlay {...baseProps} onWatchConfigChange={onWatchConfigChange} />);
+
+    const ignorePathsInput = screen.getByLabelText('ignorePaths.label');
+    fireEvent.change(ignorePathsInput, { target: { value: '**/node_modules\n.git/**' } });
+
+    fireEvent.click(screen.getByText('preferences.save'));
+
+    expect(onWatchConfigChange).toHaveBeenCalledWith({
+      watchRoot: baseProps.watchRoot,
+      ignorePaths: ['**/node_modules', '.git/**'],
+    });
+  });
+
+  it('blocks unsupported relative ignore patterns', () => {
+    const onWatchConfigChange = vi.fn();
+    render(<PreferencesOverlay {...baseProps} onWatchConfigChange={onWatchConfigChange} />);
+
+    const ignorePathsInput = screen.getByLabelText('ignorePaths.label');
+    fireEvent.change(ignorePathsInput, { target: { value: './tmp' } });
+
+    expect(screen.getByText('ignorePaths.errors.pattern')).toBeInTheDocument();
+    expect(screen.getByText('preferences.save')).toBeDisabled();
+    fireEvent.click(screen.getByText('preferences.save'));
+    expect(onWatchConfigChange).not.toHaveBeenCalled();
+  });
+
   it('resets inputs to defaults before invoking onReset', () => {
     const onReset = vi.fn();
     const onWatchConfigChange = vi.fn();

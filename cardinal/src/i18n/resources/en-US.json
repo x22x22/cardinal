@@ -162,9 +162,10 @@
   },
   "ignorePaths": {
     "label": "Ignore paths",
-    "help": "One path per line; ignored paths are skipped during indexing.",
+    "help": "One pattern per line. Supports absolute paths and .gitignore-style globs like **/node_modules or .git/**; matched files are skipped during indexing.",
     "errors": {
-      "absolute": "Each path must start with '/' or '~'."
+      "absolute": "Each path must start with '/' or '~'.",
+      "pattern": "Use an absolute path, '~/...', or a path pattern like **/node_modules. './', '../', and '~user' are not supported."
     }
   }
 }

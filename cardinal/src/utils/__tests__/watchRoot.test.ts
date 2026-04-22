@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { getWatchRootValidation, isPathInputValid } from '../watchRoot';
+import { getWatchRootValidation, isIgnorePatternInputValid, isPathInputValid } from '../watchRoot';
 
 describe('isPathInputValid', () => {
   it('rejects empty or whitespace-only inputs', () => {
@@ -69,5 +69,26 @@ describe('getWatchRootValidation', () => {
       isValid: true,
       errorKey: null,
     });
+  });
+});
+
+describe('isIgnorePatternInputValid', () => {
+  it('accepts absolute paths and home-relative paths', () => {
+    expect(isIgnorePatternInputValid('/Users/example')).toBe(true);
+    expect(isIgnorePatternInputValid('~/Library/Caches')).toBe(true);
+  });
+
+  it('accepts .gitignore-style path patterns', () => {
+    expect(isIgnorePatternInputValid('**/node_modules')).toBe(true);
+    expect(isIgnorePatternInputValid('.git/**')).toBe(true);
+    expect(isIgnorePatternInputValid('Library/**/Caches')).toBe(true);
+  });
+
+  it('rejects empty values and unsupported relative forms', () => {
+    expect(isIgnorePatternInputValid('')).toBe(false);
+    expect(isIgnorePatternInputValid('   ')).toBe(false);
+    expect(isIgnorePatternInputValid('./relative')).toBe(false);
+    expect(isIgnorePatternInputValid('../relative')).toBe(false);
+    expect(isIgnorePatternInputValid('~user/tmp')).toBe(false);
   });
 });

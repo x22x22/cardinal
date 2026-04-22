@@ -1,6 +1,7 @@
 use crate::{EventFlag, FsEvent};
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
+use fswalk::IgnoreMatcher;
 use libc::dev_t;
 use objc2_core_foundation::{CFArray, CFString, CFTimeInterval};
 use objc2_core_services::{
@@ -173,12 +174,13 @@ impl EventWatcher {
     ) -> (dev_t, EventWatcher) {
         let (_cancellation_token, cancellation_token_rx) = bounded::<()>(1);
         let (sender, receiver) = unbounded();
+        let ignore_matcher = IgnoreMatcher::new(&ignore_paths);
         let stream = EventStream::new(
             &[&path],
             since_event_id,
             latency,
             Box::new(move |events| {
-                let events = filter_ignored_events(events, &ignore_paths);
+                let events = filter_ignored_events(events, &ignore_matcher);
                 if !events.is_empty() {
                     let _ = sender.send(events);
                 }
@@ -202,14 +204,11 @@ impl EventWatcher {
     }
 }
 
-fn filter_ignored_events(events: Vec<FsEvent>, ignore_paths: &[PathBuf]) -> Vec<FsEvent> {
+fn filter_ignored_events(events: Vec<FsEvent>, ignore_matcher: &IgnoreMatcher) -> Vec<FsEvent> {
     events
         .into_iter()
         .filter(|event| {
-            event.flag.contains(EventFlag::HistoryDone)
-                || !ignore_paths
-                    .iter()
-                    .any(|ignore| event.path.starts_with(ignore))
+            event.flag.contains(EventFlag::HistoryDone) || !ignore_matcher.is_ignored(&event.path)
         })
         .collect()
 }
@@ -353,7 +352,7 @@ mod tests {
 
     #[test]
     fn filter_ignored_events_drops_ignored_paths_but_keeps_history_done() {
-        let ignored = PathBuf::from("/root/ignored");
+        let ignored = IgnoreMatcher::new(&[PathBuf::from("/root/ignored")]);
         let events = vec![
             FsEvent {
                 path: PathBuf::from("/root/ignored/file.txt"),
@@ -372,7 +371,7 @@ mod tests {
             },
         ];
 
-        let filtered = filter_ignored_events(events, &[ignored]);
+        let filtered = filter_ignored_events(events, &ignored);
 
         assert_eq!(
             filtered.len(),
@@ -390,6 +389,30 @@ mod tests {
                 .iter()
                 .any(|event| event.flag.contains(EventFlag::HistoryDone)),
             "HistoryDone must still be delivered"
+        );
+    }
+
+    #[test]
+    fn filter_ignored_events_supports_glob_patterns() {
+        let ignored = IgnoreMatcher::new(&[PathBuf::from("**/node_modules")]);
+        let events = vec![
+            FsEvent {
+                path: PathBuf::from("/root/project/node_modules/pkg/index.js"),
+                flag: EventFlag::ItemCreated,
+                id: 1,
+            },
+            FsEvent {
+                path: PathBuf::from("/root/project/src/index.js"),
+                flag: EventFlag::ItemCreated,
+                id: 2,
+            },
+        ];
+
+        let filtered = filter_ignored_events(events, &ignored);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(
+            filtered[0].path,
+            PathBuf::from("/root/project/src/index.js")
         );
     }
 }

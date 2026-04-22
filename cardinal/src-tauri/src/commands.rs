@@ -176,6 +176,27 @@ fn normalize_path_input(raw: &str) -> Option<String> {
     }
 }
 
+fn normalize_ignore_pattern_input(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.starts_with('/') {
+        return Some(trimmed.to_string());
+    }
+
+    if trimmed == "~" || trimmed.starts_with("~/") {
+        return normalize_path_input(trimmed);
+    }
+
+    if trimmed.starts_with("./") || trimmed.starts_with("../") || trimmed.starts_with('~') {
+        return None;
+    }
+
+    Some(trimmed.to_string())
+}
+
 pub(crate) fn normalize_watch_config(
     watch_root: &str,
     ignore_paths: Vec<String>,
@@ -186,7 +207,7 @@ pub(crate) fn normalize_watch_config(
     let mut ignore_paths = ignore_paths
         .into_iter()
         .filter_map(|path| {
-            let normalized = normalize_path_input(&path);
+            let normalized = normalize_ignore_pattern_input(&path);
             if normalized.is_none() {
                 warn!("Ignoring invalid ignore path: {path:?}");
             }
@@ -541,5 +562,36 @@ mod tests {
         assert_eq!(normalize_path_input("./relative"), None);
         assert_eq!(normalize_path_input("~someone"), None);
         assert_eq!(normalize_path_input("~someone/Documents"), None);
+    }
+
+    #[test]
+    fn normalize_ignore_pattern_accepts_absolute_home_and_glob_patterns() {
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
+
+        assert_eq!(
+            normalize_ignore_pattern_input("**/node_modules"),
+            Some("**/node_modules".to_string())
+        );
+        assert_eq!(
+            normalize_ignore_pattern_input("Library/**/Cache"),
+            Some("Library/**/Cache".to_string())
+        );
+        assert_eq!(
+            normalize_ignore_pattern_input("~/Library/**"),
+            Some(format!("{home}/Library/**"))
+        );
+        assert_eq!(
+            normalize_ignore_pattern_input("/Users/*/.git"),
+            Some("/Users/*/.git".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_ignore_pattern_rejects_relative_dot_and_tilde_user_forms() {
+        assert_eq!(normalize_ignore_pattern_input("./tmp"), None);
+        assert_eq!(normalize_ignore_pattern_input("../tmp"), None);
+        assert_eq!(normalize_ignore_pattern_input("~someone/tmp"), None);
     }
 }

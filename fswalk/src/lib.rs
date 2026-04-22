@@ -1,3 +1,4 @@
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use rayon::{iter::ParallelBridge, prelude::ParallelIterator};
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -6,10 +7,158 @@ use std::{
     io::{Error, ErrorKind},
     num::NonZeroU64,
     os::unix::fs::MetadataExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::UNIX_EPOCH,
 };
+
+#[derive(Debug)]
+pub struct IgnoreMatcher {
+    rules: Vec<IgnoreRule>,
+}
+
+#[derive(Debug)]
+struct IgnoreRule {
+    matcher: IgnoreRuleMatcher,
+}
+
+#[derive(Debug)]
+enum IgnoreRuleMatcher {
+    AbsolutePrefix(PathBuf),
+    Glob(GlobSet),
+}
+
+impl IgnoreMatcher {
+    pub fn new(patterns: &[PathBuf]) -> Self {
+        let rules = patterns
+            .iter()
+            .map(|pattern| IgnoreRule::from_path(pattern.as_path()))
+            .collect();
+        Self { rules }
+    }
+
+    pub fn is_ignored(&self, path: &Path) -> bool {
+        self.rules.iter().any(|rule| rule.matches(path))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+}
+
+impl IgnoreRule {
+    fn from_path(path: &Path) -> Self {
+        let normalized = normalize_pattern_path(path);
+        let matcher = if normalized.starts_with('/') && !pattern_uses_glob(&normalized) {
+            IgnoreRuleMatcher::AbsolutePrefix(PathBuf::from(&normalized))
+        } else {
+            IgnoreRuleMatcher::Glob(build_rule_globset(&normalized))
+        };
+
+        Self { matcher }
+    }
+
+    fn matches(&self, path: &Path) -> bool {
+        match &self.matcher {
+            IgnoreRuleMatcher::AbsolutePrefix(prefix) => path.starts_with(prefix),
+            IgnoreRuleMatcher::Glob(globset) => globset.is_match(relative_path_string(path)),
+        }
+    }
+}
+
+fn normalize_pattern_path(path: &Path) -> String {
+    let mut normalized = String::new();
+    if path.is_absolute() {
+        normalized.push('/');
+    }
+
+    let mut first = true;
+    for component in path.components() {
+        match component {
+            Component::RootDir => {}
+            Component::CurDir => {}
+            Component::Normal(segment) => {
+                if !first {
+                    normalized.push('/');
+                }
+                normalized.push_str(&segment.to_string_lossy());
+                first = false;
+            }
+            Component::ParentDir => {
+                if !first {
+                    normalized.push('/');
+                }
+                normalized.push_str("..");
+                first = false;
+            }
+            Component::Prefix(prefix) => {
+                if !first {
+                    normalized.push('/');
+                }
+                normalized.push_str(&prefix.as_os_str().to_string_lossy());
+                first = false;
+            }
+        }
+    }
+
+    if normalized.is_empty() && path.is_absolute() {
+        normalized.push('/');
+    }
+
+    normalized
+}
+
+fn pattern_uses_glob(pattern: &str) -> bool {
+    pattern.contains('*') || pattern.contains('?') || pattern.contains('[')
+}
+
+fn relative_path_string(path: &Path) -> String {
+    let mut out = String::new();
+    for component in path.components() {
+        if let Component::Normal(segment) = component {
+            if !out.is_empty() {
+                out.push('/');
+            }
+            out.push_str(&segment.to_string_lossy());
+        }
+    }
+    out
+}
+
+fn compile_ignore_glob(pattern: &str) -> globset::Glob {
+    GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .backslash_escape(true)
+        .build()
+        .unwrap_or_else(|err| panic!("invalid ignore glob {pattern:?}: {err}"))
+}
+
+fn build_rule_globset(pattern: &str) -> GlobSet {
+    let mut builder = GlobSetBuilder::new();
+    let anchored = pattern.starts_with('/');
+    let base = pattern.strip_prefix('/').unwrap_or(pattern);
+
+    let mut variants = Vec::new();
+    if anchored {
+        variants.push(base.to_string());
+        variants.push(format!("{base}/**"));
+    } else {
+        variants.push(base.to_string());
+        variants.push(format!("{base}/**"));
+        variants.push(format!("**/{base}"));
+        variants.push(format!("**/{base}/**"));
+    }
+
+    variants.sort();
+    variants.dedup();
+    for variant in variants {
+        builder.add(compile_ignore_glob(&variant));
+    }
+
+    builder
+        .build()
+        .unwrap_or_else(|err| panic!("invalid ignore globset {pattern:?}: {err}"))
+}
 
 #[derive(Serialize, Debug)]
 pub struct Node {
@@ -81,9 +230,14 @@ impl From<fs::FileType> for NodeFileType {
 }
 
 pub fn should_ignore_path(path: &Path, ignore_directories: &[PathBuf]) -> bool {
-    ignore_directories
-        .iter()
-        .any(|ignore| path.starts_with(ignore))
+    if ignore_directories.is_empty() {
+        return false;
+    }
+    IgnoreMatcher::new(ignore_directories).is_ignored(path)
+}
+
+pub fn should_ignore_path_with_matcher(path: &Path, matcher: &IgnoreMatcher) -> bool {
+    matcher.is_ignored(path)
 }
 
 pub struct WalkData<'w, F: Fn() -> bool> {
@@ -93,6 +247,7 @@ pub struct WalkData<'w, F: Fn() -> bool> {
     cancel: F,
     pub root_path: &'w Path,
     pub ignore_directories: &'w [PathBuf],
+    ignore_matcher: IgnoreMatcher,
     /// If set, metadata will be collected for each file node(folder node will get free metadata).
     need_metadata: bool,
 }
@@ -108,13 +263,14 @@ where
             .field("cancel", &((self.cancel)()))
             .field("root_path", &self.root_path)
             .field("ignore_directories", &self.ignore_directories)
+            .field("ignore_matcher_empty", &self.ignore_matcher.is_empty())
             .field("need_metadata", &self.need_metadata)
             .finish()
     }
 }
 
 impl<'w> WalkData<'w, fn() -> bool> {
-    pub const fn simple(root_path: &'w Path, need_metadata: bool) -> Self {
+    pub fn simple(root_path: &'w Path, need_metadata: bool) -> Self {
         fn never_cancel() -> bool {
             false
         }
@@ -125,6 +281,7 @@ impl<'w> WalkData<'w, fn() -> bool> {
             cancel: never_cancel,
             root_path,
             ignore_directories: &[],
+            ignore_matcher: IgnoreMatcher::new(&[]),
             need_metadata,
         }
     }
@@ -143,12 +300,13 @@ impl<'w, F: Fn() -> bool> WalkData<'w, F> {
             cancel,
             root_path,
             ignore_directories,
+            ignore_matcher: IgnoreMatcher::new(ignore_directories),
             need_metadata,
         }
     }
 
     fn should_ignore(&self, path: &Path) -> bool {
-        should_ignore_path(path, self.ignore_directories)
+        should_ignore_path_with_matcher(path, &self.ignore_matcher)
     }
 
     fn is_cancelled(&self) -> bool {
@@ -533,6 +691,33 @@ mod tests {
         let ignore: Vec<PathBuf> = vec![];
         let wd = WalkData::new(Path::new("/"), &ignore, false, || false);
         assert!(!wd.should_ignore(Path::new("/anything")));
+    }
+
+    #[test]
+    fn should_ignore_relative_glob_anywhere_in_tree() {
+        let ignore = vec![PathBuf::from("**/node_modules")];
+        let wd = WalkData::new(Path::new("/"), &ignore, false, || false);
+        assert!(wd.should_ignore(Path::new("/Users/demo/project/node_modules")));
+        assert!(wd.should_ignore(Path::new("/Users/demo/project/node_modules/pkg/index.js")));
+        assert!(!wd.should_ignore(Path::new("/Users/demo/project/node_moduless")));
+    }
+
+    #[test]
+    fn should_ignore_relative_segment_glob_under_nested_path() {
+        let ignore = vec![PathBuf::from(".git/**")];
+        let wd = WalkData::new(Path::new("/"), &ignore, false, || false);
+        assert!(wd.should_ignore(Path::new("/Users/demo/project/.git/config")));
+        assert!(wd.should_ignore(Path::new("/tmp/x/.git/objects/ab/cd")));
+        assert!(!wd.should_ignore(Path::new("/tmp/x/git/config")));
+    }
+
+    #[test]
+    fn should_ignore_absolute_glob_only_at_expected_absolute_prefix() {
+        let ignore = vec![PathBuf::from("/Users/*/.Trash")];
+        let wd = WalkData::new(Path::new("/"), &ignore, false, || false);
+        assert!(wd.should_ignore(Path::new("/Users/alice/.Trash")));
+        assert!(wd.should_ignore(Path::new("/Users/alice/.Trash/file.txt")));
+        assert!(!wd.should_ignore(Path::new("/tmp/Users/alice/.Trash")));
     }
 
     #[test]
