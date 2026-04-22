@@ -226,9 +226,11 @@ export function PreferencesOverlay({
                 spellCheck={false}
               />
               {watchRootErrorMessage ? (
-                <p className="permission-status permission-status--error preferences-field-error">
-                  {watchRootErrorMessage}
-                </p>
+                <div aria-live="polite">
+                  <p className="permission-status permission-status--error preferences-field-error">
+                    {watchRootErrorMessage}
+                  </p>
+                </div>
               ) : null}
             </div>
           </div>
@@ -249,9 +251,11 @@ export function PreferencesOverlay({
                 spellCheck={false}
               />
               {ignorePathsErrorMessage ? (
-                <p className="permission-status permission-status--error preferences-field-error">
-                  {ignorePathsErrorMessage}
-                </p>
+                <div aria-live="polite">
+                  <p className="permission-status permission-status--error preferences-field-error">
+                    {ignorePathsErrorMessage}
+                  </p>
+                </div>
               ) : null}
             </div>
           </div>

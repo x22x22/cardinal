@@ -12,6 +12,7 @@ use anyhow::{Result, anyhow};
 use base64::{Engine as _, engine::general_purpose};
 use camino::{Utf8Path as Path, Utf8PathBuf as PathBuf};
 use crossbeam_channel::{Receiver, Sender, bounded};
+use fswalk::validate_ignore_pattern;
 use objc2::{
     rc::{Retained, autoreleasepool},
     runtime::ProtocolObject,
@@ -208,10 +209,16 @@ pub(crate) fn normalize_watch_config(
         .into_iter()
         .filter_map(|path| {
             let normalized = normalize_ignore_pattern_input(&path);
-            if normalized.is_none() {
+            if let Some(normalized) = normalized {
+                if let Err(err) = validate_ignore_pattern(std::path::Path::new(&normalized)) {
+                    warn!("Ignoring invalid ignore path: {path:?}, error: {err}");
+                    return None;
+                }
+                Some(normalized)
+            } else {
                 warn!("Ignoring invalid ignore path: {path:?}");
+                None
             }
-            normalized
         })
         .collect::<Vec<_>>();
     if !ignore_paths

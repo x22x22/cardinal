@@ -89,6 +89,7 @@ describe('isIgnorePatternInputValid', () => {
     expect(isIgnorePatternInputValid('   ')).toBe(false);
     expect(isIgnorePatternInputValid('./relative')).toBe(false);
     expect(isIgnorePatternInputValid('../relative')).toBe(false);
+    expect(isIgnorePatternInputValid('~someone/tmp')).toBe(false);
     expect(isIgnorePatternInputValid('~user/tmp')).toBe(false);
   });
 });

@@ -17,6 +17,33 @@ pub struct IgnoreMatcher {
     rules: Vec<IgnoreRule>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgnorePatternError {
+    pattern: String,
+    message: String,
+}
+
+impl IgnorePatternError {
+    fn new(pattern: &str, message: String) -> Self {
+        Self {
+            pattern: pattern.to_string(),
+            message,
+        }
+    }
+}
+
+impl std::fmt::Display for IgnorePatternError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "invalid ignore pattern {:?}: {}",
+            self.pattern, self.message
+        )
+    }
+}
+
+impl std::error::Error for IgnorePatternError {}
+
 #[derive(Debug)]
 struct IgnoreRule {
     matcher: IgnoreRuleMatcher,
@@ -32,9 +59,17 @@ impl IgnoreMatcher {
     pub fn new(patterns: &[PathBuf]) -> Self {
         let rules = patterns
             .iter()
-            .map(|pattern| IgnoreRule::from_path(pattern.as_path()))
+            .filter_map(|pattern| IgnoreRule::from_path(pattern.as_path()).ok())
             .collect();
         Self { rules }
+    }
+
+    pub fn try_new(patterns: &[PathBuf]) -> Result<Self, IgnorePatternError> {
+        let rules = patterns
+            .iter()
+            .map(|pattern| IgnoreRule::from_path(pattern.as_path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { rules })
     }
 
     pub fn is_ignored(&self, path: &Path) -> bool {
@@ -46,16 +81,20 @@ impl IgnoreMatcher {
     }
 }
 
+pub fn validate_ignore_pattern(pattern: &Path) -> Result<(), IgnorePatternError> {
+    IgnoreRule::from_path(pattern).map(|_| ())
+}
+
 impl IgnoreRule {
-    fn from_path(path: &Path) -> Self {
+    fn from_path(path: &Path) -> Result<Self, IgnorePatternError> {
         let normalized = normalize_pattern_path(path);
         let matcher = if normalized.starts_with('/') && !pattern_uses_glob(&normalized) {
             IgnoreRuleMatcher::AbsolutePrefix(PathBuf::from(&normalized))
         } else {
-            IgnoreRuleMatcher::Glob(build_rule_globset(&normalized))
+            IgnoreRuleMatcher::Glob(build_rule_globset(&normalized)?)
         };
 
-        Self { matcher }
+        Ok(Self { matcher })
     }
 
     fn matches(&self, path: &Path) -> bool {
@@ -125,15 +164,15 @@ fn relative_path_string(path: &Path) -> String {
     out
 }
 
-fn compile_ignore_glob(pattern: &str) -> globset::Glob {
+fn compile_ignore_glob(pattern: &str) -> Result<globset::Glob, IgnorePatternError> {
     GlobBuilder::new(pattern)
         .literal_separator(true)
         .backslash_escape(true)
         .build()
-        .unwrap_or_else(|err| panic!("invalid ignore glob {pattern:?}: {err}"))
+        .map_err(|err| IgnorePatternError::new(pattern, err.to_string()))
 }
 
-fn build_rule_globset(pattern: &str) -> GlobSet {
+fn build_rule_globset(pattern: &str) -> Result<GlobSet, IgnorePatternError> {
     let mut builder = GlobSetBuilder::new();
     let anchored = pattern.starts_with('/');
     let base = pattern.strip_prefix('/').unwrap_or(pattern);
@@ -152,12 +191,12 @@ fn build_rule_globset(pattern: &str) -> GlobSet {
     variants.sort();
     variants.dedup();
     for variant in variants {
-        builder.add(compile_ignore_glob(&variant));
+        builder.add(compile_ignore_glob(&variant)?);
     }
 
     builder
         .build()
-        .unwrap_or_else(|err| panic!("invalid ignore globset {pattern:?}: {err}"))
+        .map_err(|err| IgnorePatternError::new(pattern, err.to_string()))
 }
 
 #[derive(Serialize, Debug)]
@@ -709,6 +748,19 @@ mod tests {
         assert!(wd.should_ignore(Path::new("/Users/demo/project/.git/config")));
         assert!(wd.should_ignore(Path::new("/tmp/x/.git/objects/ab/cd")));
         assert!(!wd.should_ignore(Path::new("/tmp/x/git/config")));
+    }
+
+    #[test]
+    fn invalid_glob_is_rejected_by_validation_and_skipped_by_matcher_new() {
+        let invalid = PathBuf::from("[");
+        let err = validate_ignore_pattern(&invalid).expect_err("invalid glob should be rejected");
+        assert!(err.to_string().contains("invalid ignore pattern"));
+
+        let matcher = IgnoreMatcher::new(&[invalid]);
+        assert!(
+            matcher.is_empty(),
+            "best-effort constructor should skip invalid patterns"
+        );
     }
 
     #[test]

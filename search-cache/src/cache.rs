@@ -9,7 +9,8 @@ use anyhow::{Context, Result, anyhow};
 use cardinal_sdk::{EventFlag, FsEvent, ScanType, current_event_id};
 use cardinal_syntax::{optimize_query, parse_query};
 use fswalk::{
-    Node, NodeMetadata, WalkData, should_ignore_path, walk_it, walk_it_without_root_chain,
+    Node, NodeMetadata, WalkData, should_ignore_path_with_matcher, walk_it,
+    walk_it_without_root_chain,
 };
 use hashbrown::HashSet;
 use namepool::NamePool;
@@ -478,7 +479,7 @@ impl SearchCache {
     }
 
     fn should_ignore(&self, path: &Path) -> bool {
-        should_ignore_path(path, self.file_nodes.ignore_paths())
+        should_ignore_path_with_matcher(path, self.file_nodes.ignore_matcher())
     }
 
     // `Self::scan_path_recursive`function returns index of the constructed node(with metadata provided).

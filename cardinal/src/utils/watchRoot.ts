@@ -10,7 +10,8 @@ export const isIgnorePatternInputValid = (input: string): boolean => {
   if (trimmed.length === 0) return false;
   if (trimmed.startsWith('/')) return true;
   if (trimmed === '~' || trimmed.startsWith('~/')) return true;
-  return !trimmed.startsWith('./') && !trimmed.startsWith('../') && !trimmed.startsWith('~user');
+  if (trimmed.startsWith('~')) return false;
+  return !trimmed.startsWith('./') && !trimmed.startsWith('../');
 };
 
 type WatchRootValidation = {

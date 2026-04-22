@@ -1,4 +1,5 @@
 use crate::{SlabIndex, SlabNode, ThinSlab};
+use fswalk::IgnoreMatcher;
 use std::{
     ffi::OsStr,
     ops::{Deref, DerefMut},
@@ -9,6 +10,7 @@ use std::{
 pub struct FileNodes {
     path: PathBuf,
     ignore_paths: Vec<PathBuf>,
+    ignore_matcher: IgnoreMatcher,
     slab: ThinSlab<SlabNode>,
     root: SlabIndex,
 }
@@ -20,9 +22,11 @@ impl FileNodes {
         slab: ThinSlab<SlabNode>,
         root: SlabIndex,
     ) -> Self {
+        let ignore_matcher = IgnoreMatcher::new(&ignore_paths);
         Self {
             path,
             ignore_paths,
+            ignore_matcher,
             slab,
             root,
         }
@@ -55,6 +59,10 @@ impl FileNodes {
         &self.ignore_paths
     }
 
+    pub(crate) fn ignore_matcher(&self) -> &IgnoreMatcher {
+        &self.ignore_matcher
+    }
+
     pub(crate) fn take_slab(&mut self) -> ThinSlab<SlabNode> {
         std::mem::take(&mut self.slab)
     }
@@ -67,6 +75,7 @@ impl FileNodes {
         let Self {
             path,
             ignore_paths,
+            ignore_matcher: _,
             slab,
             root,
         } = self;
