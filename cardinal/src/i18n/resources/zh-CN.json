@@ -124,6 +124,18 @@
     "trayIcon": {
       "label": "显示托盘图标"
     },
+    "windowActivationShortcut": {
+      "label": "窗口唤起快捷键",
+      "placeholder": "留空则不启用",
+      "help": "点击输入框后直接按下组合键，例如 CommandOrControl+Shift+Space。留空表示关闭该功能。",
+      "recordingHelp": "录制中……请按下包含修饰键的组合键，例如 Command+Shift+Space；按 Escape 可取消。",
+      "clear": "清空",
+      "errors": {
+        "invalidFormat": "请输入有效的快捷键格式，例如 CommandOrControl+Shift+Space。",
+        "requiresModifier": "请至少包含一个修饰键，例如 Command、Control、Option 或 Shift。",
+        "registerFailed": "无法注册该快捷键，请检查格式或更换组合键。"
+      }
+    },
     "sortingLimit": {
       "label": "排序上限"
     },

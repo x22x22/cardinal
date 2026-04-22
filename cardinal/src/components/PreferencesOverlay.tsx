@@ -1,6 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getWatchRootValidation, isIgnorePatternInputValid } from '../utils/watchRoot';
+import {
+  recordWindowActivationShortcut,
+  validateWindowActivationShortcut,
+} from '../windowActivationShortcutPreference';
 import ThemeSwitcher from './ThemeSwitcher';
 import LanguageSwitcher from './LanguageSwitcher';
 
@@ -12,6 +16,9 @@ type PreferencesOverlayProps = {
   onSortThresholdChange: (value: number) => void;
   trayIconEnabled: boolean;
   onTrayIconEnabledChange: (enabled: boolean) => void;
+  windowActivationShortcut: string;
+  defaultWindowActivationShortcut: string;
+  onWindowActivationShortcutChange: (shortcut: string) => Promise<void>;
   watchRoot: string;
   defaultWatchRoot: string;
   onWatchConfigChange: (next: { watchRoot: string; ignorePaths: string[] }) => void;
@@ -29,6 +36,9 @@ export function PreferencesOverlay({
   onSortThresholdChange,
   trayIconEnabled,
   onTrayIconEnabledChange,
+  windowActivationShortcut,
+  defaultWindowActivationShortcut,
+  onWindowActivationShortcutChange,
   watchRoot,
   defaultWatchRoot,
   onWatchConfigChange,
@@ -38,9 +48,19 @@ export function PreferencesOverlay({
   themeResetToken,
 }: PreferencesOverlayProps): React.JSX.Element | null {
   const { t } = useTranslation();
+  const windowActivationShortcutInputRef = useRef<HTMLInputElement | null>(null);
+  const isRecordingWindowActivationShortcutRef = useRef(false);
   const [thresholdInput, setThresholdInput] = useState<string>(() => sortThreshold.toString());
+  const [windowActivationShortcutInput, setWindowActivationShortcutInput] = useState<string>(
+    () => windowActivationShortcut,
+  );
   const [watchRootInput, setWatchRootInput] = useState<string>(() => watchRoot);
   const [ignorePathsInput, setIgnorePathsInput] = useState<string>(() => ignorePaths.join('\n'));
+  const [windowActivationShortcutError, setWindowActivationShortcutError] = useState<string | null>(
+    null,
+  );
+  const [isRecordingWindowActivationShortcut, setIsRecordingWindowActivationShortcut] =
+    useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -63,7 +83,11 @@ export function PreferencesOverlay({
       return;
     }
     setThresholdInput(sortThreshold.toString());
-  }, [open, sortThreshold]);
+    setWindowActivationShortcutInput(windowActivationShortcut);
+    setWindowActivationShortcutError(null);
+    isRecordingWindowActivationShortcutRef.current = false;
+    setIsRecordingWindowActivationShortcut(false);
+  }, [open, sortThreshold, windowActivationShortcut]);
 
   useEffect(() => {
     if (!open) {
@@ -72,6 +96,22 @@ export function PreferencesOverlay({
     setWatchRootInput(watchRoot);
     setIgnorePathsInput(ignorePaths.join('\n'));
   }, [open, watchRoot, ignorePaths]);
+
+  useEffect(() => {
+    if (!open || !isRecordingWindowActivationShortcut) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const input = windowActivationShortcutInputRef.current;
+      if (!input) {
+        return;
+      }
+
+      input.focus();
+      input.select();
+    });
+  }, [isRecordingWindowActivationShortcut, open]);
 
   const commitThreshold = useCallback(() => {
     const numericText = thresholdInput.replace(/[^\d]/g, '');
@@ -120,13 +160,73 @@ export function PreferencesOverlay({
     }
   };
 
-  const handleSave = (): void => {
-    if (watchRootErrorMessage || ignorePathsErrorMessage) {
+  const shortcutValidationResult = validateWindowActivationShortcut(windowActivationShortcutInput);
+  const shortcutValidationError = shortcutValidationResult.isValid
+    ? null
+    : t(shortcutValidationResult.errorKey);
+  const effectiveWindowActivationShortcutError =
+    windowActivationShortcutError ?? shortcutValidationError;
+
+  const handleWindowActivationShortcutKeyDown = (
+    event: React.KeyboardEvent<HTMLInputElement>,
+  ): void => {
+    if (!isRecordingWindowActivationShortcutRef.current) {
       return;
     }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.key === 'Escape') {
+      isRecordingWindowActivationShortcutRef.current = false;
+      setIsRecordingWindowActivationShortcut(false);
+      return;
+    }
+
+    const recordedShortcut = recordWindowActivationShortcut(event.nativeEvent);
+    if (!recordedShortcut) {
+      return;
+    }
+
+    setWindowActivationShortcutInput(recordedShortcut);
+    setWindowActivationShortcutError(null);
+    isRecordingWindowActivationShortcutRef.current = false;
+    setIsRecordingWindowActivationShortcut(false);
+  };
+
+  const handleWindowActivationShortcutChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ): void => {
+    setWindowActivationShortcutInput(event.target.value);
+    setWindowActivationShortcutError(null);
+  };
+
+  const startWindowActivationShortcutRecording = (): void => {
+    setWindowActivationShortcutError(null);
+    isRecordingWindowActivationShortcutRef.current = true;
+    setIsRecordingWindowActivationShortcut(true);
+  };
+
+  const handleSave = async (): Promise<void> => {
+    if (watchRootErrorMessage || ignorePathsErrorMessage || shortcutValidationError) {
+      setWindowActivationShortcutError(shortcutValidationError);
+      return;
+    }
+
+    try {
+      await onWindowActivationShortcutChange(windowActivationShortcutInput);
+      setWindowActivationShortcutError(null);
+    } catch {
+      setWindowActivationShortcutError(
+        t('preferences.windowActivationShortcut.errors.registerFailed'),
+      );
+      return;
+    }
+
     commitThreshold();
     const trimmedWatchRoot = watchRootInput.trim();
     onWatchConfigChange({ watchRoot: trimmedWatchRoot, ignorePaths: parsedIgnorePaths });
+    setWindowActivationShortcutInput(shortcutValidationResult.normalizedShortcut);
     setWatchRootInput(trimmedWatchRoot);
     setIgnorePathsInput(parsedIgnorePaths.join('\n'));
     onClose();
@@ -134,6 +234,10 @@ export function PreferencesOverlay({
 
   const handleReset = (): void => {
     setThresholdInput(defaultSortThreshold.toString());
+    setWindowActivationShortcutInput(defaultWindowActivationShortcut);
+    setWindowActivationShortcutError(null);
+    isRecordingWindowActivationShortcutRef.current = false;
+    setIsRecordingWindowActivationShortcut(false);
     setWatchRootInput(defaultWatchRoot);
     setIgnorePathsInput(defaultIgnorePaths.join('\n'));
     onReset();
@@ -190,6 +294,53 @@ export function PreferencesOverlay({
                 />
                 <span className="preferences-switch__track" aria-hidden="true" />
               </label>
+            </div>
+          </div>
+          <div className="preferences-row preferences-row--stacked">
+            <div className="preferences-row__details">
+              <p className="preferences-label">{t('preferences.windowActivationShortcut.label')}</p>
+            </div>
+            <div className="preferences-control preferences-control--stacked">
+              <input
+                ref={windowActivationShortcutInputRef}
+                className="preferences-field preferences-watch-root-input"
+                type="text"
+                value={windowActivationShortcutInput}
+                onChange={handleWindowActivationShortcutChange}
+                onKeyDown={handleWindowActivationShortcutKeyDown}
+                onFocus={startWindowActivationShortcutRecording}
+                onClick={startWindowActivationShortcutRecording}
+                aria-label={t('preferences.windowActivationShortcut.label')}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={t('preferences.windowActivationShortcut.placeholder')}
+              />
+              <div className="preferences-shortcut-actions">
+                <button
+                  className="preferences-shortcut-button preferences-shortcut-button--secondary"
+                  type="button"
+                  onClick={() => {
+                    setWindowActivationShortcutInput('');
+                    setWindowActivationShortcutError(null);
+                    isRecordingWindowActivationShortcutRef.current = false;
+                    setIsRecordingWindowActivationShortcut(false);
+                  }}
+                >
+                  {t('preferences.windowActivationShortcut.clear')}
+                </button>
+              </div>
+              <p className="preferences-field-hint">
+                {isRecordingWindowActivationShortcut
+                  ? t('preferences.windowActivationShortcut.recordingHelp')
+                  : t('preferences.windowActivationShortcut.help')}
+              </p>
+              {effectiveWindowActivationShortcutError ? (
+                <div aria-live="polite">
+                  <p className="permission-status permission-status--error preferences-field-error">
+                    {effectiveWindowActivationShortcutError}
+                  </p>
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="preferences-row">
@@ -264,8 +415,12 @@ export function PreferencesOverlay({
           <button
             className="preferences-save"
             type="button"
-            onClick={handleSave}
-            disabled={Boolean(watchRootErrorMessage || ignorePathsErrorMessage)}
+            onClick={() => {
+              void handleSave();
+            }}
+            disabled={Boolean(
+              watchRootErrorMessage || ignorePathsErrorMessage || shortcutValidationError,
+            )}
           >
             {t('preferences.save')}
           </button>

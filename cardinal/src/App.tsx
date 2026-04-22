@@ -163,6 +163,9 @@ function App() {
     closePreferences,
     trayIconEnabled,
     setTrayIconEnabled,
+    windowActivationShortcut,
+    defaultWindowActivationShortcut,
+    handleWindowActivationShortcutChange,
     watchRoot,
     defaultWatchRoot,
     ignorePaths,
@@ -403,6 +406,9 @@ function App() {
         onSortThresholdChange={setSortThreshold}
         trayIconEnabled={trayIconEnabled}
         onTrayIconEnabledChange={setTrayIconEnabled}
+        windowActivationShortcut={windowActivationShortcut}
+        defaultWindowActivationShortcut={defaultWindowActivationShortcut}
+        onWindowActivationShortcutChange={handleWindowActivationShortcutChange}
         watchRoot={watchRoot ?? defaultWatchRoot}
         defaultWatchRoot={defaultWatchRoot}
         onWatchConfigChange={handleWatchConfigChange}

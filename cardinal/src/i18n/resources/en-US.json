@@ -125,6 +125,18 @@
     "trayIcon": {
       "label": "Show tray icon"
     },
+    "windowActivationShortcut": {
+      "label": "Window activation shortcut",
+      "placeholder": "Leave blank to disable",
+      "help": "Click the field and press a key combination such as CommandOrControl+Shift+Space. Leave blank to keep the feature disabled.",
+      "recordingHelp": "Recording... press a modifier combination like Command+Shift+Space, or press Escape to cancel.",
+      "clear": "Clear",
+      "errors": {
+        "invalidFormat": "Use a valid accelerator such as CommandOrControl+Shift+Space.",
+        "requiresModifier": "Use at least one modifier key such as Command, Control, Option, or Shift.",
+        "registerFailed": "Unable to register that shortcut. Check the format or choose a different combination."
+      }
+    },
     "sortingLimit": {
       "label": "Sorting limit"
     },

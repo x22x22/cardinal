@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PreferencesOverlay } from '../PreferencesOverlay';
 
@@ -26,6 +26,9 @@ const baseProps = {
   onSortThresholdChange: vi.fn(),
   trayIconEnabled: false,
   onTrayIconEnabledChange: vi.fn(),
+  windowActivationShortcut: '',
+  defaultWindowActivationShortcut: '',
+  onWindowActivationShortcutChange: vi.fn().mockResolvedValue(undefined),
   watchRoot: '/old/root',
   defaultWatchRoot: '/default/root',
   ignorePaths: ['/ignore/a', '/ignore/b'],
@@ -36,7 +39,7 @@ const baseProps = {
 };
 
 describe('PreferencesOverlay', () => {
-  it('saves watch root updates via onWatchConfigChange', () => {
+  it('saves watch root updates via onWatchConfigChange', async () => {
     const onWatchConfigChange = vi.fn();
     render(<PreferencesOverlay {...baseProps} onWatchConfigChange={onWatchConfigChange} />);
 
@@ -45,13 +48,95 @@ describe('PreferencesOverlay', () => {
 
     fireEvent.click(screen.getByText('preferences.save'));
 
-    expect(onWatchConfigChange).toHaveBeenCalledWith({
-      watchRoot: '/new/root',
-      ignorePaths: baseProps.ignorePaths,
+    await waitFor(() => {
+      expect(onWatchConfigChange).toHaveBeenCalledWith({
+        watchRoot: '/new/root',
+        ignorePaths: baseProps.ignorePaths,
+      });
     });
   });
 
-  it('saves ignore path updates via onWatchConfigChange', () => {
+  it('saves window activation shortcut updates', async () => {
+    const onWindowActivationShortcutChange = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PreferencesOverlay
+        {...baseProps}
+        onWindowActivationShortcutChange={onWindowActivationShortcutChange}
+      />,
+    );
+
+    const shortcutInput = screen.getByLabelText('preferences.windowActivationShortcut.label');
+    fireEvent.change(shortcutInput, { target: { value: 'Command+Shift+Space' } });
+
+    fireEvent.click(screen.getByText('preferences.save'));
+
+    await waitFor(() => {
+      expect(onWindowActivationShortcutChange).toHaveBeenCalledWith('Command+Shift+Space');
+    });
+  });
+
+  it('records shortcut combinations from keyboard input', async () => {
+    const onWindowActivationShortcutChange = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PreferencesOverlay
+        {...baseProps}
+        onWindowActivationShortcutChange={onWindowActivationShortcutChange}
+      />,
+    );
+
+    const shortcutInput = screen.getByLabelText('preferences.windowActivationShortcut.label');
+    fireEvent.focus(shortcutInput);
+    fireEvent.keyDown(shortcutInput, {
+      key: 'K',
+      code: 'KeyK',
+      metaKey: true,
+      shiftKey: true,
+    });
+
+    expect(shortcutInput).toHaveValue('Command+Shift+K');
+
+    fireEvent.click(screen.getByText('preferences.save'));
+
+    await waitFor(() => {
+      expect(onWindowActivationShortcutChange).toHaveBeenCalledWith('Command+Shift+K');
+    });
+  });
+
+  it('focuses the shortcut input when recording starts', async () => {
+    render(<PreferencesOverlay {...baseProps} />);
+
+    const shortcutInput = screen.getByLabelText('preferences.windowActivationShortcut.label');
+    fireEvent.click(shortcutInput);
+
+    await waitFor(() => {
+      expect(shortcutInput).toHaveFocus();
+    });
+  });
+
+  it('shows recording help when shortcut input is focused', () => {
+    render(<PreferencesOverlay {...baseProps} />);
+
+    const shortcutInput = screen.getByLabelText('preferences.windowActivationShortcut.label');
+    fireEvent.focus(shortcutInput);
+
+    expect(
+      screen.getByText('preferences.windowActivationShortcut.recordingHelp'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows validation error for shortcut without modifiers', () => {
+    render(<PreferencesOverlay {...baseProps} />);
+
+    const shortcutInput = screen.getByLabelText('preferences.windowActivationShortcut.label');
+    fireEvent.change(shortcutInput, { target: { value: 'Space' } });
+
+    expect(
+      screen.getByText('preferences.windowActivationShortcut.errors.invalidFormat'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('preferences.save')).toBeDisabled();
+  });
+
+  it('saves ignore path updates via onWatchConfigChange', async () => {
     const onWatchConfigChange = vi.fn();
     render(<PreferencesOverlay {...baseProps} onWatchConfigChange={onWatchConfigChange} />);
 
@@ -60,13 +145,15 @@ describe('PreferencesOverlay', () => {
 
     fireEvent.click(screen.getByText('preferences.save'));
 
-    expect(onWatchConfigChange).toHaveBeenCalledWith({
-      watchRoot: baseProps.watchRoot,
-      ignorePaths: ['/tmp/one', '/tmp/two'],
+    await waitFor(() => {
+      expect(onWatchConfigChange).toHaveBeenCalledWith({
+        watchRoot: baseProps.watchRoot,
+        ignorePaths: ['/tmp/one', '/tmp/two'],
+      });
     });
   });
 
-  it('accepts glob-style ignore patterns', () => {
+  it('accepts glob-style ignore patterns', async () => {
     const onWatchConfigChange = vi.fn();
     render(<PreferencesOverlay {...baseProps} onWatchConfigChange={onWatchConfigChange} />);
 
@@ -75,9 +162,11 @@ describe('PreferencesOverlay', () => {
 
     fireEvent.click(screen.getByText('preferences.save'));
 
-    expect(onWatchConfigChange).toHaveBeenCalledWith({
-      watchRoot: baseProps.watchRoot,
-      ignorePaths: ['**/node_modules', '.git/**'],
+    await waitFor(() => {
+      expect(onWatchConfigChange).toHaveBeenCalledWith({
+        watchRoot: baseProps.watchRoot,
+        ignorePaths: ['**/node_modules', '.git/**'],
+      });
     });
   });
 
@@ -111,6 +200,9 @@ describe('PreferencesOverlay', () => {
 
     expect(screen.getByLabelText('preferences.sortingLimit.label')).toHaveValue(
       String(baseProps.defaultSortThreshold),
+    );
+    expect(screen.getByLabelText('preferences.windowActivationShortcut.label')).toHaveValue(
+      baseProps.defaultWindowActivationShortcut,
     );
     expect(screen.getByLabelText('watchRoot.label')).toHaveValue(baseProps.defaultWatchRoot);
     expect(screen.getByLabelText('ignorePaths.label')).toHaveValue(

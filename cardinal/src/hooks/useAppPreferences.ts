@@ -4,9 +4,15 @@ import type { i18n as I18nInstance } from 'i18next';
 import { OPEN_PREFERENCES_EVENT } from '../constants/appEvents';
 import { getBrowserLanguage } from '../i18n/config';
 import { applyThemePreference, persistThemePreference } from '../theme';
-import { setTrayEnabled } from '../tray';
+import { setTrayEnabled, updateTrayOpenAccelerator } from '../tray';
 import { getStoredTrayIconEnabled, persistTrayIconEnabled } from '../trayIconPreference';
 import { setWatchConfig } from '../utils/watchConfig';
+import { setWindowActivationShortcut } from '../utils/globalShortcuts';
+import {
+  getStoredWindowActivationShortcut,
+  persistWindowActivationShortcut,
+  validateWindowActivationShortcut,
+} from '../windowActivationShortcutPreference';
 import type { FullDiskAccessStatus } from './useFullDiskAccessPermission';
 import { useIgnorePaths } from './useIgnorePaths';
 import { useWatchRoot } from './useWatchRoot';
@@ -28,6 +34,9 @@ type UseAppPreferencesResult = {
   closePreferences: () => void;
   trayIconEnabled: boolean;
   setTrayIconEnabled: (enabled: boolean) => void;
+  windowActivationShortcut: string;
+  defaultWindowActivationShortcut: string;
+  handleWindowActivationShortcutChange: (shortcut: string) => Promise<void>;
   watchRoot: string;
   defaultWatchRoot: string;
   ignorePaths: string[];
@@ -55,6 +64,9 @@ export function useAppPreferences({
   const logicStartedRef = useRef(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
   const [trayIconEnabled, setTrayIconEnabled] = useState<boolean>(() => getStoredTrayIconEnabled());
+  const [windowActivationShortcut, setWindowActivationShortcutState] = useState<string>(() =>
+    getStoredWindowActivationShortcut(),
+  );
   const [preferencesResetToken, setPreferencesResetToken] = useState(0);
 
   useEffect(() => {
@@ -119,14 +131,29 @@ export function useAppPreferences({
     [applyWatchConfig],
   );
 
+  const handleWindowActivationShortcutChange = useCallback(async (shortcut: string) => {
+    const validationResult = validateWindowActivationShortcut(shortcut);
+    if (!validationResult.isValid) {
+      throw new Error(validationResult.errorKey);
+    }
+
+    const normalizedShortcut = validationResult.normalizedShortcut;
+
+    await setWindowActivationShortcut(normalizedShortcut);
+    persistWindowActivationShortcut(normalizedShortcut);
+    setWindowActivationShortcutState(normalizedShortcut);
+    await updateTrayOpenAccelerator(normalizedShortcut);
+  }, []);
+
   const handleResetPreferences = useCallback(() => {
     setTrayIconEnabled(false);
+    void handleWindowActivationShortcutChange('');
     persistThemePreference('system');
     applyThemePreference('system');
     const nextLanguage = getBrowserLanguage();
     void i18n.changeLanguage(nextLanguage);
     setPreferencesResetToken((token) => token + 1);
-  }, [i18n]);
+  }, [handleWindowActivationShortcutChange, i18n]);
 
   const closePreferences = useCallback(() => setIsPreferencesOpen(false), []);
 
@@ -135,6 +162,9 @@ export function useAppPreferences({
     closePreferences,
     trayIconEnabled,
     setTrayIconEnabled,
+    windowActivationShortcut,
+    defaultWindowActivationShortcut: '',
+    handleWindowActivationShortcutChange,
     watchRoot,
     defaultWatchRoot,
     ignorePaths,

@@ -1661,6 +1661,10 @@ button:active:not(:disabled) {
   padding: 5px 0;
 }
 
+.preferences-row--stacked {
+  align-items: start;
+}
+
 .preferences-label {
   font-weight: 500;
   font-size: 0.95rem;
@@ -1673,6 +1677,13 @@ button:active:not(:disabled) {
 
 .preferences-control {
   text-align: right;
+}
+
+.preferences-control--stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 .preferences-field {
@@ -1710,6 +1721,34 @@ button:active:not(:disabled) {
 
 .preferences-field-error {
   margin-bottom: 0;
+}
+
+.preferences-field-hint {
+  width: 240px;
+  text-align: left;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--color-muted);
+}
+
+.preferences-shortcut-actions {
+  width: 240px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.preferences-shortcut-button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.preferences-shortcut-button--secondary {
+  background: transparent;
+  border-color: var(--color-elevated-border, var(--color-border));
 }
 
 .preferences-field:focus {
