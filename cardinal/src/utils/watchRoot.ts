@@ -5,6 +5,15 @@ export const isPathInputValid = (input: string): boolean => {
   return trimmed === '~' || trimmed.startsWith('~/');
 };
 
+export const isIgnorePatternInputValid = (input: string): boolean => {
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return false;
+  if (trimmed.startsWith('/')) return true;
+  if (trimmed === '~' || trimmed.startsWith('~/')) return true;
+  if (trimmed.startsWith('~')) return false;
+  return !trimmed.startsWith('./') && !trimmed.startsWith('../');
+};
+
 type WatchRootValidation = {
   isValid: boolean;
   errorKey: 'watchRoot.errors.required' | 'watchRoot.errors.absolute' | null;

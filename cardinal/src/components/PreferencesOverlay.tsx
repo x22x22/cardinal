@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getWatchRootValidation, isPathInputValid } from '../utils/watchRoot';
+import { getWatchRootValidation, isIgnorePatternInputValid } from '../utils/watchRoot';
 import ThemeSwitcher from './ThemeSwitcher';
 import LanguageSwitcher from './LanguageSwitcher';
 
@@ -110,8 +110,8 @@ export function PreferencesOverlay({
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   const ignorePathsErrorMessage = (() => {
-    const invalid = parsedIgnorePaths.find((line) => !isPathInputValid(line));
-    return invalid ? t('ignorePaths.errors.absolute') : null;
+    const invalid = parsedIgnorePaths.find((line) => !isIgnorePatternInputValid(line));
+    return invalid ? t('ignorePaths.errors.pattern') : null;
   })();
 
   const handleIgnorePathsKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -149,12 +149,19 @@ export function PreferencesOverlay({
     }
   };
 
+  const handleOverlayKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      onClose();
+    }
+  };
+
   return (
     <div
       className="preferences-overlay"
       role="dialog"
       aria-modal="true"
       onClick={handleOverlayClick}
+      onKeyDown={handleOverlayKeyDown}
     >
       <div className="preferences-card">
         <header className="preferences-card__header">
@@ -219,13 +226,11 @@ export function PreferencesOverlay({
                 spellCheck={false}
               />
               {watchRootErrorMessage ? (
-                <p
-                  className="permission-status permission-status--error preferences-field-error"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {watchRootErrorMessage}
-                </p>
+                <div aria-live="polite">
+                  <p className="permission-status permission-status--error preferences-field-error">
+                    {watchRootErrorMessage}
+                  </p>
+                </div>
               ) : null}
             </div>
           </div>
@@ -246,13 +251,11 @@ export function PreferencesOverlay({
                 spellCheck={false}
               />
               {ignorePathsErrorMessage ? (
-                <p
-                  className="permission-status permission-status--error preferences-field-error"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {ignorePathsErrorMessage}
-                </p>
+                <div aria-live="polite">
+                  <p className="permission-status permission-status--error preferences-field-error">
+                    {ignorePathsErrorMessage}
+                  </p>
+                </div>
               ) : null}
             </div>
           </div>

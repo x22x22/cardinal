@@ -256,6 +256,40 @@ describe('useAppPreferences', () => {
     expect(refreshSearchResults).toHaveBeenCalledTimes(1);
   });
 
+  it('passes glob-style ignore patterns through watch config updates', async () => {
+    const { result } = renderHook(() =>
+      useAppPreferences({
+        fullDiskAccessStatus: 'granted',
+        isCheckingFullDiskAccess: false,
+        refreshSearchResults,
+        i18n: { changeLanguage },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('start_logic', {
+        watchRoot: '/workspace',
+        ignorePaths: ['/Volumes'],
+      });
+    });
+
+    mockedSetWatchConfig.mockClear();
+    setIgnorePaths.mockClear();
+
+    act(() => {
+      result.current.handleWatchConfigChange({
+        watchRoot: '/workspace',
+        ignorePaths: ['**/node_modules', '.git/**'],
+      });
+    });
+
+    expect(setIgnorePaths).toHaveBeenCalledWith(['**/node_modules', '.git/**']);
+    expect(mockedSetWatchConfig).toHaveBeenCalledWith({
+      watchRoot: '/workspace',
+      ignorePaths: ['**/node_modules', '.git/**'],
+    });
+  });
+
   it('treats reordered ignorePaths as a change', async () => {
     // areStringArraysEqual is index-sensitive: same strings in different order
     // must NOT be treated as equal, so the update must fire.

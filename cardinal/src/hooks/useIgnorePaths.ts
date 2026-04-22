@@ -10,6 +10,7 @@ const STORAGE_KEY = 'cardinal.ignorePaths';
 // - `/Library/Caches` and `/System/Library/Caches` are transient system caches with low search value.
 // - `/private/var` is a broad system runtime area for temp files, caches, logs, and databases.
 // - `/private/tmp` is a temporary-file area with very high churn and little search value.
+// - `**/node_modules`, `.git/**`, and `/Users/*/.Trash` skip common dependency, VCS metadata, and trash folders.
 const DEFAULT_IGNORE_PATHS = [
   '/Volumes',
   '~/Library/CloudStorage',
@@ -21,6 +22,9 @@ const DEFAULT_IGNORE_PATHS = [
   '/System/Library/Caches',
   '/private/var',
   '/private/tmp',
+  '**/node_modules',
+  '.git/**',
+  '/Users/*/.Trash',
 ];
 
 const cleanPaths = (next: string[]): string[] =>

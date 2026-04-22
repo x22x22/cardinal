@@ -1,7 +1,7 @@
 use fswalk::{NodeFileType, WalkData, walk_it};
 use std::{
     fs,
-    path::{Component, Path},
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 use tempdir::TempDir;
@@ -294,4 +294,25 @@ fn walk_without_root_chain_respects_prefix_ignore() {
         "skip and descendants should be excluded"
     );
     assert!(tree.children.iter().any(|c| &*c.name == "stay.txt"));
+}
+
+#[test]
+fn walk_respects_gitignore_style_glob_ignore() {
+    let tmp = TempDir::new("fswalk_glob_ignore").unwrap();
+    let root = tmp.path();
+
+    fs::create_dir_all(root.join("apps/web/node_modules/pkg")).unwrap();
+    fs::create_dir_all(root.join("apps/web/src")).unwrap();
+    fs::write(root.join("apps/web/node_modules/pkg/index.js"), b"").unwrap();
+    fs::write(root.join("apps/web/src/main.ts"), b"").unwrap();
+
+    let ignore = vec![PathBuf::from("**/node_modules")];
+    let walk_data = WalkData::new(root, &ignore, false, || false);
+    let tree = walk_it(&walk_data).expect("root node");
+    let tree = node_for_path(&tree, root);
+
+    let apps = tree.children.iter().find(|c| &*c.name == "apps").unwrap();
+    let web = apps.children.iter().find(|c| &*c.name == "web").unwrap();
+    assert!(!web.children.iter().any(|c| &*c.name == "node_modules"));
+    assert!(web.children.iter().any(|c| &*c.name == "src"));
 }

@@ -482,6 +482,39 @@ fn test_events_for_ignored_paths() {
 }
 
 #[test]
+fn test_events_for_glob_ignored_paths() {
+    let temp_dir = TempDir::new("ignored_glob_paths_test").unwrap();
+    let root_path = temp_dir.path().to_path_buf();
+    std::mem::forget(temp_dir);
+
+    let ignored_dir = root_path.join("packages/app/node_modules/pkg");
+    std::fs::create_dir_all(&ignored_dir).unwrap();
+
+    let ignore_paths = vec![PathBuf::from("**/node_modules")];
+    let mut cache = SearchCache::walk_fs_with_ignore(&root_path, &ignore_paths);
+
+    let ignored_file = ignored_dir.join("should_not_index.txt");
+    std::fs::File::create(&ignored_file).unwrap();
+
+    let event = FsEvent {
+        path: ignored_file.clone(),
+        flag: EventFlag::ItemCreated,
+        id: 301,
+    };
+
+    cache.handle_fs_events(vec![event]).unwrap();
+
+    let search_result = cache
+        .query_files("should_not_index".to_string(), CancellationToken::noop())
+        .unwrap()
+        .unwrap();
+    assert!(
+        search_result.is_empty(),
+        "glob-ignored subtree should not be indexed"
+    );
+}
+
+#[test]
 fn test_rapid_create_delete_cycle() {
     let initial_files = ["base.txt"];
     let (mut cache, root) = build_initial_cache(&initial_files);

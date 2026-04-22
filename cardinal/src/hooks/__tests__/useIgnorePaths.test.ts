@@ -15,6 +15,9 @@ const EXPECTED_DEFAULT_IGNORE_PATHS = [
   '/System/Library/Caches',
   '/private/var',
   '/private/tmp',
+  '**/node_modules',
+  '.git/**',
+  '/Users/*/.Trash',
 ];
 
 const flushEffects = async () => {
@@ -59,7 +62,7 @@ describe('useIgnorePaths', () => {
     );
   });
 
-  it('includes cache, biome, logs, metadata, and system runtime folders in default ignore paths', () => {
+  it('includes cache, biome, logs, metadata, system runtime, and common tool folders in default ignore paths', () => {
     const { result } = renderHook(() => useIgnorePaths());
 
     expect(result.current.defaultIgnorePaths).toContain('~/Library/CloudStorage');
@@ -71,6 +74,9 @@ describe('useIgnorePaths', () => {
     expect(result.current.defaultIgnorePaths).toContain('~/Library/Metadata');
     expect(result.current.defaultIgnorePaths).toContain('/private/var');
     expect(result.current.defaultIgnorePaths).toContain('/private/tmp');
+    expect(result.current.defaultIgnorePaths).toContain('**/node_modules');
+    expect(result.current.defaultIgnorePaths).toContain('.git/**');
+    expect(result.current.defaultIgnorePaths).toContain('/Users/*/.Trash');
   });
 
   it('keeps an empty stored array without writing defaults', async () => {
