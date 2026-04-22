@@ -131,7 +131,7 @@ describe('PreferencesOverlay', () => {
     fireEvent.change(shortcutInput, { target: { value: 'Space' } });
 
     expect(
-      screen.getByText('preferences.windowActivationShortcut.errors.invalidFormat'),
+      screen.getByText('preferences.windowActivationShortcut.errors.requiresModifier'),
     ).toBeInTheDocument();
     expect(screen.getByText('preferences.save')).toBeDisabled();
   });

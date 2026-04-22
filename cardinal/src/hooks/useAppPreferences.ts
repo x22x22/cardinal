@@ -147,7 +147,9 @@ export function useAppPreferences({
 
   const handleResetPreferences = useCallback(() => {
     setTrayIconEnabled(false);
-    void handleWindowActivationShortcutChange('');
+    void handleWindowActivationShortcutChange('').catch((error) => {
+      console.error('Failed to reset window activation shortcut', error);
+    });
     persistThemePreference('system');
     applyThemePreference('system');
     const nextLanguage = getBrowserLanguage();

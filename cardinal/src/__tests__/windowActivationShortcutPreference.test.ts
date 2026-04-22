@@ -16,12 +16,12 @@ describe('windowActivationShortcutPreference', () => {
     expect(validateWindowActivationShortcut('K')).toEqual({
       isValid: false,
       normalizedShortcut: 'K',
-      errorKey: 'preferences.windowActivationShortcut.errors.invalidFormat',
+      errorKey: 'preferences.windowActivationShortcut.errors.requiresModifier',
     });
     expect(validateWindowActivationShortcut('Space')).toEqual({
       isValid: false,
       normalizedShortcut: 'Space',
-      errorKey: 'preferences.windowActivationShortcut.errors.invalidFormat',
+      errorKey: 'preferences.windowActivationShortcut.errors.requiresModifier',
     });
     expect(validateWindowActivationShortcut('Shift+Space')).toEqual({
       isValid: true,

@@ -109,12 +109,26 @@ export const validateWindowActivationShortcut = (shortcut: string): ShortcutVali
   }
 
   const rawParts = normalizedShortcut.split('+').map((part) => part.trim());
-  if (rawParts.some((part) => part.length === 0) || rawParts.length < 2) {
+  if (rawParts.some((part) => part.length === 0)) {
     return {
       isValid: false,
       normalizedShortcut,
       errorKey: 'preferences.windowActivationShortcut.errors.invalidFormat',
     };
+  }
+
+  if (rawParts.length === 1) {
+    return normalizePrimaryKeyToken(rawParts[0])
+      ? {
+          isValid: false,
+          normalizedShortcut,
+          errorKey: 'preferences.windowActivationShortcut.errors.requiresModifier',
+        }
+      : {
+          isValid: false,
+          normalizedShortcut,
+          errorKey: 'preferences.windowActivationShortcut.errors.invalidFormat',
+        };
   }
 
   const primaryKeyToken = rawParts[rawParts.length - 1];
