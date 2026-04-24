@@ -4,8 +4,52 @@
       "files": "Search for files and folders...",
       "events": "Filter events by path or name..."
     },
+    "help": {
+      "files": "Supports regex:^Report, path:src/components, under:packages/app, dir:src, relative path globs like src/**/*.rs, and combos like report ext:ts;tsx.",
+      "events": "Filter recent events by filename or path."
+    },
+    "filters": {
+      "toggle": "Filters",
+      "toggleTitle": "Show or hide search filters",
+      "clear": "Clear filters",
+      "keyword": "Keyword",
+      "type": "Type",
+      "regex": "Regex",
+      "extension": "Extension",
+      "extensionPlaceholder": "e.g. ts, tsx, rs",
+      "extensionSuggestions": "Common extensions",
+      "documentExtensions": "Documents",
+      "developmentExtensions": "Development",
+      "path": "Path scope",
+      "pathPlaceholder": "e.g. src/components",
+      "pathBrowse": "Choose folder",
+      "pathPicker": "Save path",
+      "pathSuggestions": "Path picker",
+      "recentPaths": "Recent paths",
+      "suggestions": "Suggestions",
+      "recursive": "Include subfolders",
+      "direct": "Current folder only",
+      "file": "Files",
+      "folder": "Folders",
+      "any": "All"
+    },
     "options": {
       "caseSensitive": "Toggle case-sensitive matching"
+    },
+    "autocomplete": {
+      "fileDescription": "Filter files",
+      "fileAlias": "fi",
+      "folderDescription": "Filter folders",
+      "folderAlias": "fo",
+      "extensionDescription": "Filter by extension",
+      "extensionAlias": "suffix",
+      "pathDescription": "Filter by path scope",
+      "pathAlias": "scope",
+      "dirLabel": "Directory",
+      "dirDescription": "Filter current folder only",
+      "dirAlias": "directory",
+      "regexDescription": "Switch to regular expression",
+      "regexAlias": "pattern"
     }
   },
   "stateDisplay": {

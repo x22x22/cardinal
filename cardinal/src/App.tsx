@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useMemo } from 'react';
+import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent, CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
 import './App.css';
 import { FileRow } from './components/FileRow';
@@ -30,6 +30,21 @@ import { useAppPreferences } from './hooks/useAppPreferences';
 import { useAppWindowListeners } from './hooks/useAppWindowListeners';
 import { useFilesTabEffects } from './hooks/useFilesTabEffects';
 import { useFilesTabState } from './hooks/useFilesTabState';
+import {
+  applySearchAutocomplete,
+  DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG,
+  buildPathSuggestions,
+  buildSearchQuery,
+  getPathAutocompleteSuggestions,
+  getSearchAutocompleteSuggestions,
+  normalizeSearchAliasQuery,
+  parseSearchInput,
+  type SearchBuilderLabels,
+  type SearchAutocompleteSuggestion,
+  useSuggestionSelection,
+  useSearchBuilder,
+} from './hooks/useSearchBuilder';
+import { open } from '@tauri-apps/plugin-dialog';
 
 function App() {
   const {
@@ -66,6 +81,77 @@ function App() {
   const { caseSensitive } = searchParams;
   const { eventColWidths, onEventResizeStart, autoFitEventColumns } = useEventColumnWidths();
   const { t, i18n } = useTranslation();
+  const autocompleteConfig = useMemo(
+    () => ({
+      file: {
+        ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.file,
+        label: t('search.filters.file'),
+        description: t('search.autocomplete.fileDescription'),
+        aliases: [t('search.filters.file'), t('search.autocomplete.fileAlias'), 'file', 'files'],
+      },
+      folder: {
+        ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.folder,
+        label: t('search.filters.folder'),
+        description: t('search.autocomplete.folderDescription'),
+        aliases: [t('search.filters.folder'), t('search.autocomplete.folderAlias'), 'folder', 'folders'],
+      },
+      ext: {
+        ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.ext,
+        label: t('search.filters.extension'),
+        description: t('search.autocomplete.extensionDescription'),
+        aliases: [t('search.filters.extension'), t('search.autocomplete.extensionAlias'), 'ext', 'extension'],
+      },
+      path: {
+        ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.path,
+        label: t('search.filters.path'),
+        description: t('search.autocomplete.pathDescription'),
+        aliases: [t('search.filters.path'), t('search.autocomplete.pathAlias'), 'path', 'under', 'in'],
+      },
+      dir: {
+        ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.dir,
+        label: t('search.autocomplete.dirLabel'),
+        description: t('search.autocomplete.dirDescription'),
+        aliases: [t('search.autocomplete.dirLabel'), t('search.autocomplete.dirAlias'), 'dir', 'root'],
+      },
+      regex: {
+        ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.regex,
+        label: t('search.filters.regex'),
+        description: t('search.autocomplete.regexDescription'),
+        aliases: [t('search.filters.regex'), t('search.autocomplete.regexAlias'), 'regex', 're'],
+      },
+    }),
+    [t],
+  );
+  const searchBuilderLabels = useMemo<SearchBuilderLabels>(
+    () => ({
+      fileChip: t('search.filters.file'),
+      folderChip: t('search.filters.folder'),
+      regexChip: t('search.filters.regex'),
+      extensionChip: t('search.filters.extension'),
+      pathChip: t('search.autocomplete.pathAlias'),
+      dirChip: t('search.autocomplete.dirLabel'),
+    }),
+    [t],
+  );
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const {
+    keywordInput,
+    setKeywordInput,
+    filters,
+    setTypeFilter,
+    setUseRegex,
+    setExtensionInput,
+    toggleSuggestedExtension,
+    setPathInput,
+    setPathMode,
+    rememberCurrentPath,
+    clearFilter,
+    resetFilters,
+    chips,
+    recentPaths,
+  } = useSearchBuilder(searchParams.query, autocompleteConfig, searchBuilderLabels);
+  const { selectedIndex, moveSelection: moveSuggestionSelection, resetSelection } =
+    useSuggestionSelection();
   // `resultsVersion` tracks raw backend search result-set changes.
   // `displayedResultsVersion` additionally tracks UI ordering/projection changes (e.g. sort toggle).
   const {
@@ -96,6 +182,53 @@ function App() {
   } = useFilesTabState({
     searchQuery: searchParams.query,
     queueSearch,
+    filesInputValue: keywordInput,
+    onFilesInputChange: setKeywordInput,
+    onSubmitFilesQuery: (query, options) => {
+      const normalizedQuery = normalizeSearchAliasQuery(query, autocompleteConfig);
+      const parsedQuery = parseSearchInput(normalizedQuery, autocompleteConfig);
+      const nextQuery =
+        activeTab === 'events'
+          ? query
+          : buildSearchQuery(
+              parsedQuery.keyword,
+              parsedQuery.hasStructuredFilters ? parsedQuery.filters : filters,
+            );
+      queueSearch(nextQuery, {
+        immediate: options?.immediate,
+        onSearchCommitted: options?.onSearchCommitted,
+      });
+    },
+    onSearchInputKeyDownOverride: (event) => {
+      if (!(activeTab === 'files' && autocompleteSuggestions.length > 0)) {
+        return false;
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        moveSuggestionSelection(1, autocompleteSuggestions.length);
+        return true;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        moveSuggestionSelection(-1, autocompleteSuggestions.length);
+        return true;
+      }
+
+      if (event.key === 'Tab') {
+        const suggestion = autocompleteSuggestions[selectedIndex];
+        if (!suggestion) {
+          return false;
+        }
+        event.preventDefault();
+        setKeywordInput(applySearchAutocomplete(keywordInput, suggestion));
+        resetSelection();
+        return true;
+      }
+
+      return false;
+    },
   });
   const { filteredEvents } = useRecentFSEvents({
     caseSensitive,
@@ -324,6 +457,36 @@ function App() {
   const caseSensitiveLabel = t('search.options.caseSensitive');
   const searchPlaceholder =
     activeTab === 'files' ? t('search.placeholder.files') : t('search.placeholder.events');
+  const searchHelp = activeTab === 'files' ? t('search.help.files') : t('search.help.events');
+  const filterButtonLabel = t('search.filters.toggle');
+  const filterButtonTitle = t('search.filters.toggleTitle');
+  const effectiveWatchRoot = watchRoot ?? defaultWatchRoot;
+  const isFilesTabActive = activeTab === 'files';
+  const pathSuggestions = buildPathSuggestions(filters.pathInput || keywordInput, effectiveWatchRoot);
+  const autocompleteSuggestions = useMemo(
+    () =>
+      isFilesTabActive
+        ? [
+            ...getSearchAutocompleteSuggestions(keywordInput, autocompleteConfig),
+            ...getPathAutocompleteSuggestions(keywordInput, effectiveWatchRoot, recentPaths),
+          ]
+        : [],
+    [autocompleteConfig, effectiveWatchRoot, isFilesTabActive, keywordInput, recentPaths],
+  );
+
+  const handleOpenPathPicker = useCallback(async () => {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      defaultPath: effectiveWatchRoot,
+    });
+    if (typeof selected !== 'string' || selected.length === 0) {
+      return;
+    }
+    setPathInput(selected);
+    rememberCurrentPath(selected);
+  }, [effectiveWatchRoot, rememberCurrentPath, setPathInput]);
+
   const permissionSteps = [
     t('app.fullDiskAccess.steps.one'),
     t('app.fullDiskAccess.steps.two'),
@@ -340,6 +503,7 @@ function App() {
         <SearchBar
           inputRef={searchInputRef}
           placeholder={searchPlaceholder}
+          title={searchHelp}
           value={searchInputValue}
           onChange={onQueryChange}
           onKeyDown={onSearchInputKeyDown}
@@ -348,6 +512,51 @@ function App() {
           caseSensitiveLabel={caseSensitiveLabel}
           onFocus={handleSearchFocus}
           onBlur={handleSearchBlur}
+          filterButtonLabel={filterButtonLabel}
+          filterButtonTitle={filterButtonTitle}
+          filtersOpen={filtersOpen && activeTab === 'files'}
+          onToggleFilters={() => setFiltersOpen((prev) => !prev)}
+          suggestions={autocompleteSuggestions}
+          suggestionsLabel={t('search.filters.suggestions')}
+          selectedSuggestionIndex={selectedIndex}
+          onApplySuggestion={(suggestion: SearchAutocompleteSuggestion) => {
+            setKeywordInput(applySearchAutocomplete(keywordInput, suggestion));
+          }}
+          filters={filters}
+          onTypeFilterChange={setTypeFilter}
+          onRegexChange={setUseRegex}
+          onExtensionInputChange={setExtensionInput}
+          onSuggestedExtensionToggle={toggleSuggestedExtension}
+          onPathInputChange={setPathInput}
+          onPathModeChange={setPathMode}
+          onOpenPathPicker={handleOpenPathPicker}
+          recentPaths={recentPaths}
+          onRecentPathSelect={setPathInput}
+          onRememberCurrentPath={rememberCurrentPath}
+          clearFiltersLabel={t('search.filters.clear')}
+          onClearFilters={resetFilters}
+          chips={activeTab === 'files' ? chips : []}
+          onRemoveChip={clearFilter}
+          keywordLabel={t('search.filters.keyword')}
+          typeLabel={t('search.filters.type')}
+          regexLabel={t('search.filters.regex')}
+          extensionLabel={t('search.filters.extension')}
+          extensionPlaceholder={t('search.filters.extensionPlaceholder')}
+          extensionSuggestionsLabel={t('search.filters.extensionSuggestions')}
+          documentExtensionsLabel={t('search.filters.documentExtensions')}
+          developmentExtensionsLabel={t('search.filters.developmentExtensions')}
+          pathLabel={t('search.filters.path')}
+          pathPlaceholder={t('search.filters.pathPlaceholder')}
+          pathBrowseLabel={t('search.filters.pathBrowse')}
+          pathPickerLabel={t('search.filters.pathPicker')}
+          pathSuggestions={pathSuggestions}
+          pathSuggestionsLabel={t('search.filters.pathSuggestions')}
+          recentPathsLabel={t('search.filters.recentPaths')}
+          recursiveLabel={t('search.filters.recursive')}
+          directLabel={t('search.filters.direct')}
+          fileLabel={t('search.filters.file')}
+          folderLabel={t('search.filters.folder')}
+          anyLabel={t('search.filters.any')}
         />
         <div className={resultsContainerClassName} style={containerStyle}>
           {activeTab === 'events' ? (

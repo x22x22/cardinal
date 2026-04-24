@@ -2,15 +2,39 @@ use cardinal_syntax::{
     ArgumentKind, ComparisonValue, Expr, Filter, FilterArgument, FilterKind, Query, RangeValue,
     Term,
 };
-use std::env;
+use std::{env, path::Path};
 
+#[cfg(test)]
 pub(crate) fn expand_query_home_dirs(query: Query) -> Query {
     let Some(home) = home_dir() else { return query };
-    expand_query_home_dirs_with_home(query, &home)
+    expand_query_home_dirs_with_home_and_root(query, &home, None)
 }
 
-fn expand_query_home_dirs_with_home(mut query: Query, home: &str) -> Query {
-    query.expr = expand_expr(query.expr, home);
+#[cfg(test)]
+fn expand_query_home_dirs_with_home(query: Query, home: &str) -> Query {
+    expand_query_home_dirs_with_home_and_root(query, home, None)
+}
+
+pub(crate) fn resolve_query_paths(query: Query, root: &Path) -> Query {
+    let mut query = query;
+    if let Some(home) = home_dir() {
+        query = expand_query_home_dirs_with_home_and_root(query, &home, None);
+    }
+    query.expr = resolve_expr_paths(query.expr, root);
+    query
+}
+
+fn expand_query_home_dirs_with_home_and_root(
+    mut query: Query,
+    home: &str,
+    root: Option<&Path>,
+) -> Query {
+    if !home.is_empty() {
+        query.expr = expand_expr(query.expr, home);
+    }
+    if let Some(root) = root {
+        query.expr = resolve_expr_paths(query.expr, root);
+    }
     query
 }
 
@@ -127,6 +151,85 @@ pub(crate) fn strip_query_quotes_text(value: &str) -> String {
     result
 }
 
+fn resolve_expr_paths(expr: Expr, root: &Path) -> Expr {
+    match expr {
+        Expr::Empty => Expr::Empty,
+        Expr::Term(term) => Expr::Term(resolve_term_paths(term, root)),
+        Expr::Not(inner) => Expr::Not(Box::new(resolve_expr_paths(*inner, root))),
+        Expr::And(parts) => Expr::And(
+            parts
+                .into_iter()
+                .map(|part| resolve_expr_paths(part, root))
+                .collect(),
+        ),
+        Expr::Or(parts) => Expr::Or(
+            parts
+                .into_iter()
+                .map(|part| resolve_expr_paths(part, root))
+                .collect(),
+        ),
+    }
+}
+
+fn resolve_term_paths(term: Term, root: &Path) -> Term {
+    match term {
+        Term::Word(word) => Term::Word(resolve_word_path(word, root)),
+        Term::Filter(filter) => Term::Filter(resolve_filter_paths(filter, root)),
+        Term::Regex(pattern) => Term::Regex(pattern),
+    }
+}
+
+fn resolve_word_path(word: String, root: &Path) -> String {
+    if should_resolve_relative_path(&word) {
+        root.join(word).to_string_lossy().into_owned()
+    } else {
+        word
+    }
+}
+
+fn resolve_filter_paths(mut filter: Filter, root: &Path) -> Filter {
+    if filter_requires_path(&filter.kind)
+        && let Some(argument) = filter.argument.as_mut()
+        && should_resolve_relative_filter_path(&argument.raw)
+    {
+        argument.raw = root.join(&argument.raw).to_string_lossy().into_owned();
+    }
+    filter
+}
+
+fn should_resolve_relative_filter_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with('/') || trimmed.starts_with('~') || trimmed.starts_with("\\\\") {
+        return false;
+    }
+    !is_windows_absolute_path(trimmed)
+}
+
+fn should_resolve_relative_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.starts_with('/') || trimmed.starts_with('~') || trimmed.starts_with("\\\\") {
+        return false;
+    }
+    if is_windows_absolute_path(trimmed) {
+        return false;
+    }
+    trimmed.contains('/') || trimmed.contains('\\')
+}
+
+fn is_windows_absolute_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
+}
+
 fn expand_filter(mut filter: Filter, home: &str) -> Filter {
     if filter_requires_path(&filter.kind)
         && let Some(argument) = filter.argument.as_mut()
@@ -218,6 +321,7 @@ fn home_dir() -> Option<String> {
 mod tests {
     use super::*;
     use cardinal_syntax::{RangeSeparator, Term, parse_query};
+    use std::path::Path;
 
     fn expand(input: &str, home: &str) -> Query {
         let parsed = parse_query(input).expect("valid query");
@@ -232,6 +336,16 @@ mod tests {
             Expr::Term(Term::Filter(filter)) => filter,
             other => panic!("Expected filter expr, got {other:?}"),
         }
+    }
+
+    fn resolve(input: &str, root: &str) -> Query {
+        let parsed = parse_query(input).expect("valid query");
+        resolve_query_paths(parsed, Path::new(root))
+    }
+
+    fn resolve_with_home(input: &str, home: &str, root: &str) -> Query {
+        let parsed = parse_query(input).expect("valid query");
+        expand_query_home_dirs_with_home_and_root(parsed, home, Some(Path::new(root)))
     }
 
     #[test]
@@ -309,6 +423,74 @@ mod tests {
                     other => panic!("Unexpected right expr: {other:?}"),
                 }
             }
+            other => panic!("Unexpected expr: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolves_relative_word_paths_against_root() {
+        let root = Path::new("/Users/demo/workspace");
+        let query = resolve("src/**/*.rs", root.to_string_lossy().as_ref());
+        match query.expr {
+            Expr::Term(Term::Word(word)) => {
+                assert_eq!(word, root.join("src/**/*.rs").to_string_lossy());
+            }
+            other => panic!("Unexpected expr: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolves_relative_path_filters_against_root() {
+        let root = Path::new("/Users/demo/workspace");
+        let query = resolve("path:src/components", root.to_string_lossy().as_ref());
+        match query.expr {
+            Expr::Term(Term::Filter(filter)) => {
+                assert!(matches!(filter.kind, FilterKind::InFolder));
+                let argument = filter.argument.expect("argument");
+                assert_eq!(argument.raw, root.join("src/components").to_string_lossy());
+            }
+            other => panic!("Unexpected expr: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn keeps_plain_keywords_unresolved() {
+        let query = resolve("report ext:rs", "/Users/demo/workspace");
+        match query.expr {
+            Expr::And(parts) => {
+                assert!(matches!(&parts[0], Expr::Term(Term::Word(word)) if word == "report"));
+                let Expr::Term(Term::Filter(filter)) = &parts[1] else {
+                    panic!("Expected ext filter");
+                };
+                assert!(matches!(filter.kind, FilterKind::Ext));
+                assert_eq!(filter.argument.as_ref().expect("argument").raw, "rs");
+            }
+            other => panic!("Unexpected expr: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn leaves_absolute_and_home_paths_untouched_when_resolving() {
+        let root = Path::new("/Users/demo/workspace");
+        let absolute = resolve("/tmp/logs", root.to_string_lossy().as_ref());
+        match absolute.expr {
+            Expr::Term(Term::Word(word)) => assert_eq!(word, "/tmp/logs"),
+            other => panic!("Unexpected expr: {other:?}"),
+        }
+
+        let home = resolve_with_home("~/logs", "/Users/demo", "/Users/demo/workspace");
+        match home.expr {
+            Expr::Term(Term::Word(word)) => assert_eq!(word, "/Users/demo/logs"),
+            other => panic!("Unexpected expr: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn leaves_tilde_paths_untouched_without_home_dir() {
+        let parsed = parse_query("~/logs").expect("valid query");
+        let resolved = expand_query_home_dirs_with_home_and_root(parsed, "", Some(Path::new("/tmp/root")));
+        match resolved.expr {
+            Expr::Term(Term::Word(word)) => assert_eq!(word, "~/logs"),
             other => panic!("Unexpected expr: {other:?}"),
         }
     }

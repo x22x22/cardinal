@@ -19,6 +19,12 @@ type HookProps = {
       onSearchCommitted?: (query: string) => void;
     },
   ) => void;
+  filesInputValue?: string;
+  onFilesInputChange?: (value: string) => void;
+  onSubmitFilesQuery?: (
+    query: string,
+    options?: { immediate?: boolean; onSearchCommitted?: (query: string) => void },
+  ) => void;
 };
 
 describe('useFilesTabState', () => {
@@ -27,15 +33,20 @@ describe('useFilesTabState', () => {
   const navigate = vi.fn();
   const ensureTailValue = vi.fn();
   const resetCursorToTail = vi.fn();
+  const onFilesInputChange = vi.fn();
+  const onSubmitFilesQuery = vi.fn();
 
   const renderFilesTabState = (overrides: Partial<HookProps> = {}) =>
     renderHook((props: HookProps) => useFilesTabState(props), {
-      initialProps: {
-        searchQuery: 'needle',
-        queueSearch,
-        ...overrides,
-      },
-    });
+        initialProps: {
+          searchQuery: 'needle',
+          queueSearch,
+          filesInputValue: undefined,
+          onFilesInputChange: undefined,
+          onSubmitFilesQuery: undefined,
+          ...overrides,
+        },
+      });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -69,6 +80,9 @@ describe('useFilesTabState', () => {
     rerender({
       searchQuery: 'needle-updated',
       queueSearch,
+      filesInputValue: undefined,
+      onFilesInputChange: undefined,
+      onSubmitFilesQuery: undefined,
     });
     expect(result.current.searchInputValue).toBe('evt');
 
@@ -131,6 +145,29 @@ describe('useFilesTabState', () => {
       } as ChangeEvent<HTMLInputElement>);
     });
     expect(result.current.eventFilterQuery).toBe('event-path');
+    expect(queueSearch).not.toHaveBeenCalled();
+  });
+
+  it('supports external file input state and submit handler', () => {
+    const { result } = renderFilesTabState({
+      filesInputValue: 'builder keyword',
+      onFilesInputChange,
+      onSubmitFilesQuery,
+    });
+
+    expect(result.current.searchInputValue).toBe('builder keyword');
+
+    act(() => {
+      result.current.onQueryChange({
+        target: { value: 'next keyword' },
+      } as ChangeEvent<HTMLInputElement>);
+    });
+
+    expect(onFilesInputChange).toHaveBeenCalledWith('next keyword');
+    expect(onSubmitFilesQuery).toHaveBeenCalledWith('next keyword', {
+      immediate: undefined,
+      onSearchCommitted: handleInputChange,
+    });
     expect(queueSearch).not.toHaveBeenCalled();
   });
 
