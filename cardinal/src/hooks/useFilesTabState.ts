@@ -11,6 +11,10 @@ type QueueSearchOptions = {
 type UseFilesTabStateOptions = {
   searchQuery: string;
   queueSearch: (query: string, options?: QueueSearchOptions) => void;
+  filesInputValue?: string;
+  onFilesInputChange?: (value: string) => void;
+  onSubmitFilesQuery?: (query: string, options?: { immediate?: boolean }) => void;
+  onSearchInputKeyDownOverride?: (event: ReactKeyboardEvent<HTMLInputElement>) => boolean;
   maxSearchHistoryEntries?: number;
 };
 
@@ -35,6 +39,10 @@ type UseFilesTabStateResult = {
 export function useFilesTabState({
   searchQuery,
   queueSearch,
+  filesInputValue,
+  onFilesInputChange,
+  onSubmitFilesQuery,
+  onSearchInputKeyDownOverride,
   maxSearchHistoryEntries = 50,
 }: UseFilesTabStateOptions): UseFilesTabStateResult {
   const [activeTab, setActiveTab] = useState<StatusTabKey>('files');
@@ -57,12 +65,18 @@ export function useFilesTabState({
 
   const submitFilesQuery = useCallback(
     (query: string, options?: { immediate?: boolean }) => {
+      onFilesInputChange?.(query);
+      if (onSubmitFilesQuery) {
+        onSubmitFilesQuery(query, options);
+        return;
+      }
+
       queueSearch(query, {
         immediate: options?.immediate,
         onSearchCommitted: updateHistoryFromInput,
       });
     },
-    [queueSearch, updateHistoryFromInput],
+    [onFilesInputChange, onSubmitFilesQuery, queueSearch, updateHistoryFromInput],
   );
 
   const handleHistoryNavigation = useCallback(
@@ -83,6 +97,10 @@ export function useFilesTabState({
 
   const onSearchInputKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (onSearchInputKeyDownOverride?.(event)) {
+        return;
+      }
+
       if (activeTab !== 'files') {
         return;
       }
@@ -103,7 +121,7 @@ export function useFilesTabState({
       event.preventDefault();
       handleHistoryNavigation(event.key === 'ArrowUp' ? 'older' : 'newer');
     },
-    [activeTab, handleHistoryNavigation, submitFilesQuery],
+    [activeTab, handleHistoryNavigation, onSearchInputKeyDownOverride, submitFilesQuery],
   );
 
   const onQueryChange = useCallback(
@@ -115,9 +133,10 @@ export function useFilesTabState({
         return;
       }
 
+      onFilesInputChange?.(inputValue);
       submitFilesQuery(inputValue);
     },
-    [activeTab, setEventFilterQuery, submitFilesQuery],
+    [activeTab, onFilesInputChange, submitFilesQuery],
   );
 
   const onTabChange = useCallback(
@@ -133,12 +152,12 @@ export function useFilesTabState({
       ensureHistoryBuffer('');
       queueSearch('', { immediate: true });
     },
-    [ensureHistoryBuffer, queueSearch, resetCursorToTail, setEventFilterQuery],
+    [ensureHistoryBuffer, queueSearch, resetCursorToTail],
   );
 
   const searchInputValue = useMemo(
-    () => (activeTab === 'events' ? eventFilterQuery : searchQuery),
-    [activeTab, eventFilterQuery, searchQuery],
+    () => (activeTab === 'events' ? eventFilterQuery : (filesInputValue ?? searchQuery)),
+    [activeTab, eventFilterQuery, filesInputValue, searchQuery],
   );
 
   return {

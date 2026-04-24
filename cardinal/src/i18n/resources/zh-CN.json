@@ -4,8 +4,52 @@
       "files": "搜索文件和文件夹…",
       "events": "按路径或名称筛选事件…"
     },
+    "help": {
+      "files": "支持 regex:^Report、path:src/components、under:packages/app、dir:src、相对路径通配如 src/**/*.rs，以及 report ext:ts;tsx 这类组合筛选。",
+      "events": "按文件名或路径筛选最近事件。"
+    },
+    "filters": {
+      "toggle": "筛选",
+      "toggleTitle": "打开或收起搜索筛选条件",
+      "clear": "清空筛选",
+      "keyword": "关键词",
+      "type": "类型",
+      "regex": "正则",
+      "extension": "后缀",
+      "extensionPlaceholder": "例如 ts, tsx, rs",
+      "extensionSuggestions": "常用后缀",
+      "documentExtensions": "文档类",
+      "developmentExtensions": "开发类",
+      "path": "路径范围",
+      "pathPlaceholder": "例如 src/components",
+      "pathBrowse": "选择目录",
+      "pathPicker": "加入常用路径",
+      "pathSuggestions": "路径选择器",
+      "recentPaths": "最近使用路径",
+      "suggestions": "联想建议",
+      "recursive": "包含子目录",
+      "direct": "仅当前目录",
+      "file": "文件",
+      "folder": "文件夹",
+      "any": "全部"
+    },
     "options": {
       "caseSensitive": "切换区分大小写匹配"
+    },
+    "autocomplete": {
+      "fileDescription": "筛选文件",
+      "fileAlias": "文",
+      "folderDescription": "筛选文件夹",
+      "folderAlias": "夹",
+      "extensionDescription": "按后缀筛选",
+      "extensionAlias": "扩展名",
+      "pathDescription": "按路径范围筛选",
+      "pathAlias": "范围",
+      "dirLabel": "目录",
+      "dirDescription": "仅当前目录筛选",
+      "dirAlias": "目录",
+      "regexDescription": "切换到正则表达式",
+      "regexAlias": "正则"
     }
   },
   "stateDisplay": {

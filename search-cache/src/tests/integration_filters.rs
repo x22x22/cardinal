@@ -301,3 +301,81 @@ fn test_nosubfolders_only_filters_target_tree() {
     assert_eq!(paths.len(), 1);
     assert_eq!(paths[0], projects.join("report.txt"));
 }
+
+#[test]
+fn test_path_alias_scopes_descendants() {
+    let tmp = TempDir::new("path_alias_descendants").unwrap();
+    fs::create_dir_all(tmp.path().join("src/components")).unwrap();
+    fs::write(tmp.path().join("src/components/Button.tsx"), b"button").unwrap();
+    fs::write(tmp.path().join("src/App.tsx"), b"app").unwrap();
+
+    let mut cache = SearchCache::walk_fs(tmp.path());
+    let paths: Vec<_> = cache
+        .search("path:src/components ext:tsx")
+        .unwrap()
+        .into_iter()
+        .filter_map(|idx| cache.node_path(idx))
+        .collect();
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0], tmp.path().join("src/components/Button.tsx"));
+}
+
+#[test]
+fn test_under_alias_supports_relative_root_paths() {
+    let tmp = TempDir::new("under_alias_relative_root").unwrap();
+    fs::create_dir_all(tmp.path().join("apps/cardinal/src")).unwrap();
+    fs::write(tmp.path().join("apps/cardinal/src/App.tsx"), b"app").unwrap();
+    fs::write(tmp.path().join("apps/cardinal/README.md"), b"docs").unwrap();
+
+    let mut cache = SearchCache::walk_fs(tmp.path());
+    let paths: Vec<_> = cache
+        .search("under:apps/cardinal/src App ext:tsx")
+        .unwrap()
+        .into_iter()
+        .filter_map(|idx| cache.node_path(idx))
+        .collect();
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0], tmp.path().join("apps/cardinal/src/App.tsx"));
+}
+
+#[test]
+fn test_dir_alias_limits_direct_children() {
+    let tmp = TempDir::new("dir_alias_direct_children").unwrap();
+    fs::create_dir_all(tmp.path().join("src/nested")).unwrap();
+    fs::write(tmp.path().join("src/main.rs"), b"root").unwrap();
+    fs::write(tmp.path().join("src/nested/main.rs"), b"nested").unwrap();
+
+    let mut cache = SearchCache::walk_fs(tmp.path());
+    let paths: Vec<_> = cache
+        .search("dir:src ext:rs")
+        .unwrap()
+        .into_iter()
+        .filter_map(|idx| cache.node_path(idx))
+        .collect();
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0], tmp.path().join("src/main.rs"));
+}
+
+#[test]
+fn test_relative_path_glob_combines_with_extension_filter() {
+    let tmp = TempDir::new("relative_path_glob_with_ext").unwrap();
+    fs::create_dir_all(tmp.path().join("packages/app/src")).unwrap();
+    fs::write(tmp.path().join("packages/app/src/main.ts"), b"ts").unwrap();
+    fs::write(tmp.path().join("packages/app/src/main.tsx"), b"tsx").unwrap();
+    fs::write(tmp.path().join("packages/app/src/helper.js"), b"js").unwrap();
+
+    let mut cache = SearchCache::walk_fs(tmp.path());
+    let paths: Vec<_> = cache
+        .search("packages/app/src/main* ext:ts;tsx")
+        .unwrap()
+        .into_iter()
+        .filter_map(|idx| cache.node_path(idx))
+        .collect();
+
+    assert_eq!(paths.len(), 2);
+    assert!(paths.iter().any(|path| path == &tmp.path().join("packages/app/src/main.ts")));
+    assert!(paths.iter().any(|path| path == &tmp.path().join("packages/app/src/main.tsx")));
+}
