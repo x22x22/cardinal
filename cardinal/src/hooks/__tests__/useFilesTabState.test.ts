@@ -21,7 +21,10 @@ type HookProps = {
   ) => void;
   filesInputValue?: string;
   onFilesInputChange?: (value: string) => void;
-  onSubmitFilesQuery?: (query: string, options?: { immediate?: boolean }) => void;
+  onSubmitFilesQuery?: (
+    query: string,
+    options?: { immediate?: boolean; onSearchCommitted?: (query: string) => void },
+  ) => void;
 };
 
 describe('useFilesTabState', () => {
@@ -161,7 +164,10 @@ describe('useFilesTabState', () => {
     });
 
     expect(onFilesInputChange).toHaveBeenCalledWith('next keyword');
-    expect(onSubmitFilesQuery).toHaveBeenCalledWith('next keyword', undefined);
+    expect(onSubmitFilesQuery).toHaveBeenCalledWith('next keyword', {
+      immediate: undefined,
+      onSearchCommitted: handleInputChange,
+    });
     expect(queueSearch).not.toHaveBeenCalled();
   });
 

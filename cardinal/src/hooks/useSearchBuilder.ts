@@ -293,7 +293,7 @@ export function parseSearchInput(
   };
 }
 
-function active_token_bounds(input: string): { start: number; end: number; token: string } {
+function activeTokenBounds(input: string): { start: number; end: number; token: string } {
   const trimmedEnd = input.length;
   const leading = input.slice(0, trimmedEnd);
   const quotedPathMatch = /(path:|dir:)(?:"[^"]*|[^\s]*)$/i.exec(leading);
@@ -318,7 +318,7 @@ export function getSearchAutocompleteSuggestions(
   input: string,
   config: SearchAutocompleteConfig = DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG,
 ): SearchAutocompleteSuggestion[] {
-  const { token } = active_token_bounds(input);
+  const { token } = activeTokenBounds(input);
   const prefix = token.trim();
   if (!prefix) {
     return [];
@@ -359,7 +359,7 @@ export function applySearchAutocomplete(
   input: string,
   suggestion: SearchAutocompleteSuggestion,
 ): string {
-  const { start, end } = active_token_bounds(input);
+  const { start, end } = activeTokenBounds(input);
   const replacement = suggestion.insertText.endsWith(':') ? suggestion.insertText : `${suggestion.insertText} `;
   return `${input.slice(0, start)}${replacement}${input.slice(end)}`;
 }
@@ -369,7 +369,7 @@ export function getPathAutocompleteSuggestions(
   watchRoot: string,
   recentPaths: string[],
 ): SearchAutocompleteSuggestion[] {
-  const { token } = active_token_bounds(input);
+  const { token } = activeTokenBounds(input);
   const pathMatch = /^(path:|dir:)(.*)$/i.exec(token.trim());
   if (!pathMatch) {
     return [];

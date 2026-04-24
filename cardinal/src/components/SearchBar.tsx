@@ -141,15 +141,39 @@ export function SearchBar({
             onFocus={onFocus}
             onBlur={onBlur}
             aria-label={keywordLabel}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={suggestions.length > 0}
+            aria-controls={suggestions.length > 0 ? 'search-suggestion-listbox' : undefined}
+            aria-activedescendant={
+              selectedSuggestionIndex >= 0 && selectedSuggestionIndex < suggestions.length
+                ? `search-suggestion-option-${suggestions[selectedSuggestionIndex]?.id}`
+                : undefined
+            }
+            aria-haspopup="listbox"
           />
           {suggestions.length > 0 ? (
             <div className="search-suggestion-dropdown">
-              <span className="search-filter-suggestions__label">{suggestionsLabel}</span>
-              <div className="search-suggestion-dropdown__list">
+              <span
+                id="search-suggestion-listbox-label"
+                className="search-filter-suggestions__label"
+              >
+                {suggestionsLabel}
+              </span>
+              <div
+                id="search-suggestion-listbox"
+                className="search-suggestion-dropdown__list"
+                role="listbox"
+                aria-label={suggestionsLabel}
+                aria-labelledby="search-suggestion-listbox-label"
+              >
                 {suggestions.map((suggestion, index) => (
                   <button
                     key={suggestion.id}
+                    id={`search-suggestion-option-${suggestion.id}`}
                     type="button"
+                    role="option"
+                    aria-selected={index === selectedSuggestionIndex}
                     className={`search-suggestion${index === selectedSuggestionIndex ? ' is-active' : ''}`}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => onApplySuggestion(suggestion)}

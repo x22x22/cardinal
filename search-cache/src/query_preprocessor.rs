@@ -16,8 +16,12 @@ fn expand_query_home_dirs_with_home(query: Query, home: &str) -> Query {
 }
 
 pub(crate) fn resolve_query_paths(query: Query, root: &Path) -> Query {
-    let home = home_dir();
-    expand_query_home_dirs_with_home_and_root(query, home.as_deref().unwrap_or(""), Some(root))
+    let mut query = query;
+    if let Some(home) = home_dir() {
+        query = expand_query_home_dirs_with_home_and_root(query, &home, None);
+    }
+    query.expr = resolve_expr_paths(query.expr, root);
+    query
 }
 
 fn expand_query_home_dirs_with_home_and_root(
@@ -25,7 +29,9 @@ fn expand_query_home_dirs_with_home_and_root(
     home: &str,
     root: Option<&Path>,
 ) -> Query {
-    query.expr = expand_expr(query.expr, home);
+    if !home.is_empty() {
+        query.expr = expand_expr(query.expr, home);
+    }
     if let Some(root) = root {
         query.expr = resolve_expr_paths(query.expr, root);
     }
@@ -423,10 +429,11 @@ mod tests {
 
     #[test]
     fn resolves_relative_word_paths_against_root() {
-        let query = resolve("src/**/*.rs", "/Users/demo/workspace");
+        let root = Path::new("/Users/demo/workspace");
+        let query = resolve("src/**/*.rs", root.to_string_lossy().as_ref());
         match query.expr {
             Expr::Term(Term::Word(word)) => {
-                assert_eq!(word, "/Users/demo/workspace/src/**/*.rs");
+                assert_eq!(word, root.join("src/**/*.rs").to_string_lossy());
             }
             other => panic!("Unexpected expr: {other:?}"),
         }
@@ -434,12 +441,13 @@ mod tests {
 
     #[test]
     fn resolves_relative_path_filters_against_root() {
-        let query = resolve("path:src/components", "/Users/demo/workspace");
+        let root = Path::new("/Users/demo/workspace");
+        let query = resolve("path:src/components", root.to_string_lossy().as_ref());
         match query.expr {
             Expr::Term(Term::Filter(filter)) => {
                 assert!(matches!(filter.kind, FilterKind::InFolder));
                 let argument = filter.argument.expect("argument");
-                assert_eq!(argument.raw, "/Users/demo/workspace/src/components");
+                assert_eq!(argument.raw, root.join("src/components").to_string_lossy());
             }
             other => panic!("Unexpected expr: {other:?}"),
         }
@@ -463,7 +471,8 @@ mod tests {
 
     #[test]
     fn leaves_absolute_and_home_paths_untouched_when_resolving() {
-        let absolute = resolve("/tmp/logs", "/Users/demo/workspace");
+        let root = Path::new("/Users/demo/workspace");
+        let absolute = resolve("/tmp/logs", root.to_string_lossy().as_ref());
         match absolute.expr {
             Expr::Term(Term::Word(word)) => assert_eq!(word, "/tmp/logs"),
             other => panic!("Unexpected expr: {other:?}"),
@@ -472,6 +481,16 @@ mod tests {
         let home = resolve_with_home("~/logs", "/Users/demo", "/Users/demo/workspace");
         match home.expr {
             Expr::Term(Term::Word(word)) => assert_eq!(word, "/Users/demo/logs"),
+            other => panic!("Unexpected expr: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn leaves_tilde_paths_untouched_without_home_dir() {
+        let parsed = parse_query("~/logs").expect("valid query");
+        let resolved = expand_query_home_dirs_with_home_and_root(parsed, "", Some(Path::new("/tmp/root")));
+        match resolved.expr {
+            Expr::Term(Term::Word(word)) => assert_eq!(word, "~/logs"),
             other => panic!("Unexpected expr: {other:?}"),
         }
     }

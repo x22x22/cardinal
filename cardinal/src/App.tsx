@@ -196,6 +196,7 @@ function App() {
             );
       queueSearch(nextQuery, {
         immediate: options?.immediate,
+        onSearchCommitted: options?.onSearchCommitted,
       });
     },
     onSearchInputKeyDownOverride: (event) => {
@@ -460,13 +461,17 @@ function App() {
   const filterButtonLabel = t('search.filters.toggle');
   const filterButtonTitle = t('search.filters.toggleTitle');
   const effectiveWatchRoot = watchRoot ?? defaultWatchRoot;
+  const isFilesTabActive = activeTab === 'files';
   const pathSuggestions = buildPathSuggestions(filters.pathInput || keywordInput, effectiveWatchRoot);
   const autocompleteSuggestions = useMemo(
-    () => [
-      ...getSearchAutocompleteSuggestions(keywordInput, autocompleteConfig),
-      ...getPathAutocompleteSuggestions(keywordInput, effectiveWatchRoot, recentPaths),
-    ],
-    [autocompleteConfig, effectiveWatchRoot, keywordInput, recentPaths],
+    () =>
+      isFilesTabActive
+        ? [
+            ...getSearchAutocompleteSuggestions(keywordInput, autocompleteConfig),
+            ...getPathAutocompleteSuggestions(keywordInput, effectiveWatchRoot, recentPaths),
+          ]
+        : [],
+    [autocompleteConfig, effectiveWatchRoot, isFilesTabActive, keywordInput, recentPaths],
   );
 
   const handleOpenPathPicker = useCallback(async () => {

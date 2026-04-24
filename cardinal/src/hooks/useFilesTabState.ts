@@ -13,7 +13,7 @@ type UseFilesTabStateOptions = {
   queueSearch: (query: string, options?: QueueSearchOptions) => void;
   filesInputValue?: string;
   onFilesInputChange?: (value: string) => void;
-  onSubmitFilesQuery?: (query: string, options?: { immediate?: boolean }) => void;
+  onSubmitFilesQuery?: (query: string, options?: QueueSearchOptions) => void;
   onSearchInputKeyDownOverride?: (event: ReactKeyboardEvent<HTMLInputElement>) => boolean;
   maxSearchHistoryEntries?: number;
 };
@@ -65,9 +65,11 @@ export function useFilesTabState({
 
   const submitFilesQuery = useCallback(
     (query: string, options?: { immediate?: boolean }) => {
-      onFilesInputChange?.(query);
       if (onSubmitFilesQuery) {
-        onSubmitFilesQuery(query, options);
+        onSubmitFilesQuery(query, {
+          immediate: options?.immediate,
+          onSearchCommitted: updateHistoryFromInput,
+        });
         return;
       }
 
@@ -76,7 +78,7 @@ export function useFilesTabState({
         onSearchCommitted: updateHistoryFromInput,
       });
     },
-    [onFilesInputChange, onSubmitFilesQuery, queueSearch, updateHistoryFromInput],
+    [onSubmitFilesQuery, queueSearch, updateHistoryFromInput],
   );
 
   const handleHistoryNavigation = useCallback(
