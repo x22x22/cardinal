@@ -296,6 +296,8 @@ function App() {
     closePreferences,
     trayIconEnabled,
     setTrayIconEnabled,
+    autostartEnabled,
+    setAutostartEnabled,
     windowActivationShortcut,
     defaultWindowActivationShortcut,
     handleWindowActivationShortcutChange,
@@ -615,6 +617,8 @@ function App() {
         onSortThresholdChange={setSortThreshold}
         trayIconEnabled={trayIconEnabled}
         onTrayIconEnabledChange={setTrayIconEnabled}
+        autostartEnabled={autostartEnabled}
+        onAutostartEnabledChange={setAutostartEnabled}
         windowActivationShortcut={windowActivationShortcut}
         defaultWindowActivationShortcut={defaultWindowActivationShortcut}
         onWindowActivationShortcutChange={handleWindowActivationShortcutChange}

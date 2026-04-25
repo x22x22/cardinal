@@ -168,6 +168,9 @@
     "trayIcon": {
       "label": "显示托盘图标"
     },
+    "autostart": {
+      "label": "开机自启动"
+    },
     "windowActivationShortcut": {
       "label": "窗口唤起快捷键",
       "placeholder": "留空则不启用",

@@ -1,6 +1,11 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OPEN_PREFERENCES_EVENT } from '../../constants/appEvents';
+import {
+  getStoredAutostartEnabled,
+  persistAutostartEnabled,
+  setAutostartEnabled,
+} from '../../autostartPreference';
 import { applyThemePreference, persistThemePreference } from '../../theme';
 import { setTrayEnabled } from '../../tray';
 import { getStoredTrayIconEnabled, persistTrayIconEnabled } from '../../trayIconPreference';
@@ -18,6 +23,12 @@ import { invoke } from '@tauri-apps/api/core';
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
+}));
+
+vi.mock('../../autostartPreference', () => ({
+  getStoredAutostartEnabled: vi.fn(),
+  persistAutostartEnabled: vi.fn(),
+  setAutostartEnabled: vi.fn(),
 }));
 
 vi.mock('../useWatchRoot', () => ({
@@ -65,6 +76,9 @@ vi.mock('../../i18n/config', () => ({
 }));
 
 const mockedInvoke = vi.mocked(invoke);
+const mockedGetStoredAutostartEnabled = vi.mocked(getStoredAutostartEnabled);
+const mockedPersistAutostartEnabled = vi.mocked(persistAutostartEnabled);
+const mockedSetAutostartEnabled = vi.mocked(setAutostartEnabled);
 const mockedUseWatchRoot = vi.mocked(useWatchRoot);
 const mockedUseIgnorePaths = vi.mocked(useIgnorePaths);
 const mockedGetStoredTrayIconEnabled = vi.mocked(getStoredTrayIconEnabled);
@@ -98,7 +112,9 @@ describe('useAppPreferences', () => {
       defaultIgnorePaths: ['/Volumes'],
     });
     mockedGetStoredTrayIconEnabled.mockReturnValue(true);
+    mockedGetStoredAutostartEnabled.mockReturnValue(true);
     mockedSetTrayEnabled.mockResolvedValue(undefined);
+    mockedSetAutostartEnabled.mockResolvedValue(undefined);
     mockedSetWatchConfig.mockResolvedValue(undefined);
     mockedSetWindowActivationShortcut.mockResolvedValue(undefined);
     mockedInvoke.mockResolvedValue(undefined);
@@ -150,6 +166,36 @@ describe('useAppPreferences', () => {
     });
 
     expect(mockedInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('defaults autostart on and updates the system setting when changed', async () => {
+    const { result } = renderHook(() =>
+      useAppPreferences({
+        fullDiskAccessStatus: 'denied',
+        isCheckingFullDiskAccess: false,
+        refreshSearchResults,
+        i18n: { changeLanguage },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockedSetAutostartEnabled).toHaveBeenCalledWith(true);
+    });
+    expect(mockedPersistAutostartEnabled).toHaveBeenCalledWith(true);
+    expect(result.current.autostartEnabled).toBe(true);
+
+    mockedSetAutostartEnabled.mockClear();
+    mockedPersistAutostartEnabled.mockClear();
+
+    act(() => {
+      result.current.setAutostartEnabled(false);
+    });
+
+    await waitFor(() => {
+      expect(mockedSetAutostartEnabled).toHaveBeenCalledWith(false);
+    });
+    expect(mockedPersistAutostartEnabled).toHaveBeenCalledWith(false);
+    expect(result.current.autostartEnabled).toBe(false);
   });
 
   it('updates watch config and refreshes search when preferences change', async () => {
@@ -413,6 +459,10 @@ describe('useAppPreferences', () => {
       expect(mockedSetTrayEnabled).toHaveBeenCalledWith(false);
     });
     expect(mockedPersistTrayIconEnabled).toHaveBeenCalledWith(false);
+    await waitFor(() => {
+      expect(mockedSetAutostartEnabled).toHaveBeenCalledWith(true);
+    });
+    expect(mockedPersistAutostartEnabled).toHaveBeenCalledWith(true);
     await waitFor(() => {
       expect(mockedSetWindowActivationShortcut).toHaveBeenCalledWith('');
     });

@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { i18n as I18nInstance } from 'i18next';
 import { OPEN_PREFERENCES_EVENT } from '../constants/appEvents';
+import {
+  getStoredAutostartEnabled,
+  persistAutostartEnabled,
+  setAutostartEnabled,
+} from '../autostartPreference';
 import { getBrowserLanguage } from '../i18n/config';
 import { applyThemePreference, persistThemePreference } from '../theme';
 import { setTrayEnabled, updateTrayOpenAccelerator } from '../tray';
@@ -34,6 +39,8 @@ type UseAppPreferencesResult = {
   closePreferences: () => void;
   trayIconEnabled: boolean;
   setTrayIconEnabled: (enabled: boolean) => void;
+  autostartEnabled: boolean;
+  setAutostartEnabled: (enabled: boolean) => void;
   windowActivationShortcut: string;
   defaultWindowActivationShortcut: string;
   handleWindowActivationShortcutChange: (shortcut: string) => Promise<void>;
@@ -64,6 +71,9 @@ export function useAppPreferences({
   const logicStartedRef = useRef(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
   const [trayIconEnabled, setTrayIconEnabled] = useState<boolean>(() => getStoredTrayIconEnabled());
+  const [autostartEnabled, setAutostartEnabledState] = useState<boolean>(() =>
+    getStoredAutostartEnabled(),
+  );
   const [windowActivationShortcut, setWindowActivationShortcutState] = useState<string>(() =>
     getStoredWindowActivationShortcut(),
   );
@@ -73,6 +83,13 @@ export function useAppPreferences({
     persistTrayIconEnabled(trayIconEnabled);
     void setTrayEnabled(trayIconEnabled);
   }, [trayIconEnabled]);
+
+  useEffect(() => {
+    persistAutostartEnabled(autostartEnabled);
+    void setAutostartEnabled(autostartEnabled).catch((error) => {
+      console.error('Failed to update autostart preference', error);
+    });
+  }, [autostartEnabled]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -147,6 +164,7 @@ export function useAppPreferences({
 
   const handleResetPreferences = useCallback(() => {
     setTrayIconEnabled(false);
+    setAutostartEnabledState(true);
     void handleWindowActivationShortcutChange('').catch((error) => {
       console.error('Failed to reset window activation shortcut', error);
     });
@@ -164,6 +182,8 @@ export function useAppPreferences({
     closePreferences,
     trayIconEnabled,
     setTrayIconEnabled,
+    autostartEnabled,
+    setAutostartEnabled: setAutostartEnabledState,
     windowActivationShortcut,
     defaultWindowActivationShortcut: '',
     handleWindowActivationShortcutChange,

@@ -26,6 +26,8 @@ const baseProps = {
   onSortThresholdChange: vi.fn(),
   trayIconEnabled: false,
   onTrayIconEnabledChange: vi.fn(),
+  autostartEnabled: true,
+  onAutostartEnabledChange: vi.fn(),
   windowActivationShortcut: '',
   defaultWindowActivationShortcut: '',
   onWindowActivationShortcutChange: vi.fn().mockResolvedValue(undefined),
@@ -73,6 +75,27 @@ describe('PreferencesOverlay', () => {
     await waitFor(() => {
       expect(onWindowActivationShortcutChange).toHaveBeenCalledWith('Command+Shift+Space');
     });
+  });
+
+  it('toggles autostart immediately', () => {
+    const onAutostartEnabledChange = vi.fn();
+    render(
+      <PreferencesOverlay
+        {...baseProps}
+        autostartEnabled={true}
+        onAutostartEnabledChange={onAutostartEnabledChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText('preferences.autostart.label'));
+
+    expect(onAutostartEnabledChange).toHaveBeenCalledWith(false);
+  });
+
+  it('shows autostart enabled by default', () => {
+    render(<PreferencesOverlay {...baseProps} />);
+
+    expect(screen.getByLabelText('preferences.autostart.label')).toBeChecked();
   });
 
   it('records shortcut combinations from keyboard input', async () => {
