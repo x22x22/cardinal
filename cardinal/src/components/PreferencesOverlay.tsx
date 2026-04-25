@@ -16,6 +16,8 @@ type PreferencesOverlayProps = {
   onSortThresholdChange: (value: number) => void;
   trayIconEnabled: boolean;
   onTrayIconEnabledChange: (enabled: boolean) => void;
+  autostartEnabled: boolean;
+  onAutostartEnabledChange: (enabled: boolean) => void;
   windowActivationShortcut: string;
   defaultWindowActivationShortcut: string;
   onWindowActivationShortcutChange: (shortcut: string) => Promise<void>;
@@ -36,6 +38,8 @@ export function PreferencesOverlay({
   onSortThresholdChange,
   trayIconEnabled,
   onTrayIconEnabledChange,
+  autostartEnabled,
+  onAutostartEnabledChange,
   windowActivationShortcut,
   defaultWindowActivationShortcut,
   onWindowActivationShortcutChange,
@@ -291,6 +295,21 @@ export function PreferencesOverlay({
                   checked={trayIconEnabled}
                   onChange={(event) => onTrayIconEnabledChange(event.target.checked)}
                   aria-label={t('preferences.trayIcon.label')}
+                />
+                <span className="preferences-switch__track" aria-hidden="true" />
+              </label>
+            </div>
+          </div>
+          <div className="preferences-row">
+            <p className="preferences-label">{t('preferences.autostart.label')}</p>
+            <div className="preferences-control">
+              <label className="preferences-switch">
+                <input
+                  className="preferences-switch__input"
+                  type="checkbox"
+                  checked={autostartEnabled}
+                  onChange={(event) => onAutostartEnabledChange(event.target.checked)}
+                  aria-label={t('preferences.autostart.label')}
                 />
                 <span className="preferences-switch__track" aria-hidden="true" />
               </label>

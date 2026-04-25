@@ -169,6 +169,9 @@
     "trayIcon": {
       "label": "Show tray icon"
     },
+    "autostart": {
+      "label": "Launch at login"
+    },
     "windowActivationShortcut": {
       "label": "Window activation shortcut",
       "placeholder": "Leave blank to disable",
