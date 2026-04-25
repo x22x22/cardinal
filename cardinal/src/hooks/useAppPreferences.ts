@@ -3,9 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import type { i18n as I18nInstance } from 'i18next';
 import { OPEN_PREFERENCES_EVENT } from '../constants/appEvents';
 import {
+  DEFAULT_AUTOSTART_ENABLED,
   getStoredAutostartEnabled,
   persistAutostartEnabled,
-  setAutostartEnabled,
+  setAutostartEnabled as applyAutostartEnabled,
 } from '../autostartPreference';
 import { getBrowserLanguage } from '../i18n/config';
 import { applyThemePreference, persistThemePreference } from '../theme';
@@ -86,7 +87,7 @@ export function useAppPreferences({
 
   useEffect(() => {
     persistAutostartEnabled(autostartEnabled);
-    void setAutostartEnabled(autostartEnabled).catch((error) => {
+    void applyAutostartEnabled(autostartEnabled).catch((error) => {
       console.error('Failed to update autostart preference', error);
     });
   }, [autostartEnabled]);
@@ -164,7 +165,7 @@ export function useAppPreferences({
 
   const handleResetPreferences = useCallback(() => {
     setTrayIconEnabled(false);
-    setAutostartEnabledState(true);
+    setAutostartEnabledState(DEFAULT_AUTOSTART_ENABLED);
     void handleWindowActivationShortcutChange('').catch((error) => {
       console.error('Failed to reset window activation shortcut', error);
     });

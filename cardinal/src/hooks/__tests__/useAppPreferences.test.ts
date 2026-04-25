@@ -26,6 +26,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 vi.mock('../../autostartPreference', () => ({
+  DEFAULT_AUTOSTART_ENABLED: true,
   getStoredAutostartEnabled: vi.fn(),
   persistAutostartEnabled: vi.fn(),
   setAutostartEnabled: vi.fn(),
