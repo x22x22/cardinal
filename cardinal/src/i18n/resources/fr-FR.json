@@ -125,6 +125,9 @@
     "trayIcon": {
       "label": "Afficher l’icône dans la barre d’état"
     },
+    "launchMinimizedToTray": {
+      "label": "Réduire dans la barre d’état au démarrage"
+    },
     "sortingLimit": {
       "label": "Limite de tri"
     },

@@ -125,6 +125,9 @@
     "trayIcon": {
       "label": "Tray-Symbol anzeigen"
     },
+    "launchMinimizedToTray": {
+      "label": "Beim Start in den Tray minimieren"
+    },
     "sortingLimit": {
       "label": "Sortierlimit"
     },

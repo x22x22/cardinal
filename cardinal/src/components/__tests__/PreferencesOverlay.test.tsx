@@ -26,6 +26,8 @@ const baseProps = {
   onSortThresholdChange: vi.fn(),
   trayIconEnabled: false,
   onTrayIconEnabledChange: vi.fn(),
+  launchMinimizedToTray: true,
+  onLaunchMinimizedToTrayChange: vi.fn(),
   windowActivationShortcut: '',
   defaultWindowActivationShortcut: '',
   onWindowActivationShortcutChange: vi.fn().mockResolvedValue(undefined),
@@ -73,6 +75,20 @@ describe('PreferencesOverlay', () => {
     await waitFor(() => {
       expect(onWindowActivationShortcutChange).toHaveBeenCalledWith('Command+Shift+Space');
     });
+  });
+
+  it('toggles launch minimized to tray preference immediately', () => {
+    const onLaunchMinimizedToTrayChange = vi.fn();
+    render(
+      <PreferencesOverlay
+        {...baseProps}
+        onLaunchMinimizedToTrayChange={onLaunchMinimizedToTrayChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText('preferences.launchMinimizedToTray.label'));
+
+    expect(onLaunchMinimizedToTrayChange).toHaveBeenCalledWith(false);
   });
 
   it('records shortcut combinations from keyboard input', async () => {

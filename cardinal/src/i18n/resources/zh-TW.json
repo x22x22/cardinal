@@ -124,6 +124,9 @@
     "trayIcon": {
       "label": "顯示托盤圖示"
     },
+    "launchMinimizedToTray": {
+      "label": "啟動後最小化到托盤"
+    },
     "sortingLimit": {
       "label": "排序上限"
     },

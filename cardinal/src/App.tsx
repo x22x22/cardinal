@@ -93,25 +93,46 @@ function App() {
         ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.folder,
         label: t('search.filters.folder'),
         description: t('search.autocomplete.folderDescription'),
-        aliases: [t('search.filters.folder'), t('search.autocomplete.folderAlias'), 'folder', 'folders'],
+        aliases: [
+          t('search.filters.folder'),
+          t('search.autocomplete.folderAlias'),
+          'folder',
+          'folders',
+        ],
       },
       ext: {
         ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.ext,
         label: t('search.filters.extension'),
         description: t('search.autocomplete.extensionDescription'),
-        aliases: [t('search.filters.extension'), t('search.autocomplete.extensionAlias'), 'ext', 'extension'],
+        aliases: [
+          t('search.filters.extension'),
+          t('search.autocomplete.extensionAlias'),
+          'ext',
+          'extension',
+        ],
       },
       path: {
         ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.path,
         label: t('search.filters.path'),
         description: t('search.autocomplete.pathDescription'),
-        aliases: [t('search.filters.path'), t('search.autocomplete.pathAlias'), 'path', 'under', 'in'],
+        aliases: [
+          t('search.filters.path'),
+          t('search.autocomplete.pathAlias'),
+          'path',
+          'under',
+          'in',
+        ],
       },
       dir: {
         ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.dir,
         label: t('search.autocomplete.dirLabel'),
         description: t('search.autocomplete.dirDescription'),
-        aliases: [t('search.autocomplete.dirLabel'), t('search.autocomplete.dirAlias'), 'dir', 'root'],
+        aliases: [
+          t('search.autocomplete.dirLabel'),
+          t('search.autocomplete.dirAlias'),
+          'dir',
+          'root',
+        ],
       },
       regex: {
         ...DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG.regex,
@@ -150,8 +171,11 @@ function App() {
     chips,
     recentPaths,
   } = useSearchBuilder(searchParams.query, autocompleteConfig, searchBuilderLabels);
-  const { selectedIndex, moveSelection: moveSuggestionSelection, resetSelection } =
-    useSuggestionSelection();
+  const {
+    selectedIndex,
+    moveSelection: moveSuggestionSelection,
+    resetSelection,
+  } = useSuggestionSelection();
   // `resultsVersion` tracks raw backend search result-set changes.
   // `displayedResultsVersion` additionally tracks UI ordering/projection changes (e.g. sort toggle).
   const {
@@ -296,6 +320,8 @@ function App() {
     closePreferences,
     trayIconEnabled,
     setTrayIconEnabled,
+    launchMinimizedToTray,
+    setLaunchMinimizedToTray,
     windowActivationShortcut,
     defaultWindowActivationShortcut,
     handleWindowActivationShortcutChange,
@@ -462,7 +488,10 @@ function App() {
   const filterButtonTitle = t('search.filters.toggleTitle');
   const effectiveWatchRoot = watchRoot ?? defaultWatchRoot;
   const isFilesTabActive = activeTab === 'files';
-  const pathSuggestions = buildPathSuggestions(filters.pathInput || keywordInput, effectiveWatchRoot);
+  const pathSuggestions = buildPathSuggestions(
+    filters.pathInput || keywordInput,
+    effectiveWatchRoot,
+  );
   const autocompleteSuggestions = useMemo(
     () =>
       isFilesTabActive
@@ -615,6 +644,8 @@ function App() {
         onSortThresholdChange={setSortThreshold}
         trayIconEnabled={trayIconEnabled}
         onTrayIconEnabledChange={setTrayIconEnabled}
+        launchMinimizedToTray={launchMinimizedToTray}
+        onLaunchMinimizedToTrayChange={setLaunchMinimizedToTray}
         windowActivationShortcut={windowActivationShortcut}
         defaultWindowActivationShortcut={defaultWindowActivationShortcut}
         onWindowActivationShortcutChange={handleWindowActivationShortcutChange}

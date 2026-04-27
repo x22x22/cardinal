@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OPEN_PREFERENCES_EVENT } from '../../constants/appEvents';
 import { applyThemePreference, persistThemePreference } from '../../theme';
 import { setTrayEnabled } from '../../tray';
+import {
+  getStoredLaunchMinimizedToTray,
+  persistLaunchMinimizedToTray,
+} from '../../launchMinimizedToTrayPreference';
 import { getStoredTrayIconEnabled, persistTrayIconEnabled } from '../../trayIconPreference';
 import { setWatchConfig } from '../../utils/watchConfig';
 import { setWindowActivationShortcut } from '../../utils/globalShortcuts';
@@ -31,6 +35,11 @@ vi.mock('../useIgnorePaths', () => ({
 vi.mock('../../trayIconPreference', () => ({
   getStoredTrayIconEnabled: vi.fn(),
   persistTrayIconEnabled: vi.fn(),
+}));
+
+vi.mock('../../launchMinimizedToTrayPreference', () => ({
+  getStoredLaunchMinimizedToTray: vi.fn(),
+  persistLaunchMinimizedToTray: vi.fn(),
 }));
 
 vi.mock('../../tray', () => ({
@@ -69,6 +78,8 @@ const mockedUseWatchRoot = vi.mocked(useWatchRoot);
 const mockedUseIgnorePaths = vi.mocked(useIgnorePaths);
 const mockedGetStoredTrayIconEnabled = vi.mocked(getStoredTrayIconEnabled);
 const mockedPersistTrayIconEnabled = vi.mocked(persistTrayIconEnabled);
+const mockedGetStoredLaunchMinimizedToTray = vi.mocked(getStoredLaunchMinimizedToTray);
+const mockedPersistLaunchMinimizedToTray = vi.mocked(persistLaunchMinimizedToTray);
 const mockedSetTrayEnabled = vi.mocked(setTrayEnabled);
 const mockedPersistThemePreference = vi.mocked(persistThemePreference);
 const mockedApplyThemePreference = vi.mocked(applyThemePreference);
@@ -98,6 +109,7 @@ describe('useAppPreferences', () => {
       defaultIgnorePaths: ['/Volumes'],
     });
     mockedGetStoredTrayIconEnabled.mockReturnValue(true);
+    mockedGetStoredLaunchMinimizedToTray.mockReturnValue(false);
     mockedSetTrayEnabled.mockResolvedValue(undefined);
     mockedSetWatchConfig.mockResolvedValue(undefined);
     mockedSetWindowActivationShortcut.mockResolvedValue(undefined);
@@ -149,7 +161,30 @@ describe('useAppPreferences', () => {
       i18n: { changeLanguage },
     });
 
-    expect(mockedInvoke).toHaveBeenCalledTimes(1);
+    expect(mockedInvoke.mock.calls.filter(([command]) => command === 'start_logic')).toHaveLength(
+      1,
+    );
+  });
+
+  it('hides the main window on startup when launch minimized to tray is enabled', async () => {
+    mockedGetStoredTrayIconEnabled.mockReturnValue(false);
+    mockedGetStoredLaunchMinimizedToTray.mockReturnValue(true);
+
+    const { result } = renderHook(() =>
+      useAppPreferences({
+        fullDiskAccessStatus: 'denied',
+        isCheckingFullDiskAccess: false,
+        refreshSearchResults,
+        i18n: { changeLanguage },
+      }),
+    );
+
+    expect(result.current.launchMinimizedToTray).toBe(true);
+    await waitFor(() => {
+      expect(mockedSetTrayEnabled).toHaveBeenCalledWith(true);
+      expect(mockedInvoke).toHaveBeenCalledWith('hide_main_window');
+    });
+    expect(mockedPersistLaunchMinimizedToTray).toHaveBeenCalledWith(true);
   });
 
   it('updates watch config and refreshes search when preferences change', async () => {
@@ -393,6 +428,7 @@ describe('useAppPreferences', () => {
 
     mockedSetTrayEnabled.mockClear();
     mockedPersistTrayIconEnabled.mockClear();
+    mockedPersistLaunchMinimizedToTray.mockClear();
 
     act(() => {
       window.dispatchEvent(new Event(OPEN_PREFERENCES_EVENT));
@@ -410,9 +446,10 @@ describe('useAppPreferences', () => {
     });
 
     await waitFor(() => {
-      expect(mockedSetTrayEnabled).toHaveBeenCalledWith(false);
+      expect(mockedSetTrayEnabled).toHaveBeenCalledWith(true);
     });
     expect(mockedPersistTrayIconEnabled).toHaveBeenCalledWith(false);
+    expect(mockedPersistLaunchMinimizedToTray).toHaveBeenCalledWith(true);
     await waitFor(() => {
       expect(mockedSetWindowActivationShortcut).toHaveBeenCalledWith('');
     });

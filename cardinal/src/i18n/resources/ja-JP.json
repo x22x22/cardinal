@@ -125,6 +125,9 @@
     "trayIcon": {
       "label": "トレイアイコンを表示"
     },
+    "launchMinimizedToTray": {
+      "label": "起動時にトレイへ最小化"
+    },
     "sortingLimit": {
       "label": "並び替えの上限"
     },

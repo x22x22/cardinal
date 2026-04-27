@@ -125,6 +125,9 @@
     "trayIcon": {
       "label": "Показывать значок в трее"
     },
+    "launchMinimizedToTray": {
+      "label": "Сворачивать в трей при запуске"
+    },
     "sortingLimit": {
       "label": "Порог сортировки"
     },
