@@ -92,7 +92,12 @@ export function useAppPreferences({
 
     startupMinimizeHandledRef.current = true;
     if (launchMinimizedToTray) {
-      void setTrayEnabled(true).then(() => invoke('hide_main_window'));
+      void setTrayEnabled(true, { silent: true }).then((initialized) => {
+        if (initialized) {
+          return invoke('hide_main_window');
+        }
+        return invoke('activate_main_window');
+      });
     } else {
       void invoke('activate_main_window');
     }

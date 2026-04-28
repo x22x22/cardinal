@@ -110,7 +110,7 @@ describe('useAppPreferences', () => {
     });
     mockedGetStoredTrayIconEnabled.mockReturnValue(true);
     mockedGetStoredLaunchMinimizedToTray.mockReturnValue(false);
-    mockedSetTrayEnabled.mockResolvedValue(undefined);
+    mockedSetTrayEnabled.mockResolvedValue(true);
     mockedSetWatchConfig.mockResolvedValue(undefined);
     mockedSetWindowActivationShortcut.mockResolvedValue(undefined);
     mockedInvoke.mockResolvedValue(undefined);
@@ -181,10 +181,30 @@ describe('useAppPreferences', () => {
 
     expect(result.current.launchMinimizedToTray).toBe(true);
     await waitFor(() => {
-      expect(mockedSetTrayEnabled).toHaveBeenCalledWith(true);
+      expect(mockedSetTrayEnabled).toHaveBeenCalledWith(true, { silent: true });
       expect(mockedInvoke).toHaveBeenCalledWith('hide_main_window');
     });
     expect(mockedPersistLaunchMinimizedToTray).toHaveBeenCalledWith(true);
+  });
+
+  it('shows the main window on startup when tray initialization fails', async () => {
+    mockedGetStoredTrayIconEnabled.mockReturnValue(false);
+    mockedGetStoredLaunchMinimizedToTray.mockReturnValue(true);
+    mockedSetTrayEnabled.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    renderHook(() =>
+      useAppPreferences({
+        fullDiskAccessStatus: 'denied',
+        isCheckingFullDiskAccess: false,
+        refreshSearchResults,
+        i18n: { changeLanguage },
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('activate_main_window');
+    });
+    expect(mockedInvoke).not.toHaveBeenCalledWith('hide_main_window');
   });
 
   it('updates watch config and refreshes search when preferences change', async () => {

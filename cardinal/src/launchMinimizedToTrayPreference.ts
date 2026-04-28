@@ -1,8 +1,17 @@
 const LAUNCH_MINIMIZED_TO_TRAY_STORAGE_KEY = 'cardinal.launchMinimizedToTray';
 
 export const getStoredLaunchMinimizedToTray = (): boolean => {
-  const stored = window.localStorage.getItem(LAUNCH_MINIMIZED_TO_TRAY_STORAGE_KEY);
-  return stored !== 'false';
+  if (typeof window === 'undefined') {
+    return true;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(LAUNCH_MINIMIZED_TO_TRAY_STORAGE_KEY);
+    return stored !== 'false';
+  } catch {
+    // Ignore storage failures and fall back to the default.
+    return true;
+  }
 };
 
 export const persistLaunchMinimizedToTray = (enabled: boolean): void => {

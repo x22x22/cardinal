@@ -11,25 +11,33 @@ let trayInitPromise: Promise<void> | null = null;
 let trayIcon: TrayIcon | null = null;
 let openMenuItem: MenuItem | null = null;
 
-export function initializeTray(): Promise<void> {
+export function initializeTray(): Promise<boolean> {
   if (!trayInitPromise) {
     trayInitPromise = createTray().catch((error) => {
       console.error('Failed to initialize Cardinal tray', error);
       trayInitPromise = null;
+      throw error;
     });
   }
 
-  return trayInitPromise;
+  return trayInitPromise.then(
+    () => true,
+    () => false,
+  );
 }
 
-export async function setTrayEnabled(enabled: boolean): Promise<void> {
-  await invoke('set_tray_activation_policy', { enabled }).catch((error) => {
-    console.error('Failed to update activation policy', error);
-  });
+export async function setTrayEnabled(
+  enabled: boolean,
+  options?: { silent?: boolean },
+): Promise<boolean> {
+  await invoke('set_tray_activation_policy', { enabled, silent: options?.silent ?? false }).catch(
+    (error) => {
+      console.error('Failed to update activation policy', error);
+    },
+  );
 
   if (enabled) {
-    await initializeTray();
-    return;
+    return initializeTray();
   }
 
   const pendingInit = trayInitPromise;
@@ -42,6 +50,7 @@ export async function setTrayEnabled(enabled: boolean): Promise<void> {
   openMenuItem = null;
 
   await Promise.allSettled([current?.close(), TrayIcon.removeById(TRAY_ID)]);
+  return true;
 }
 
 export async function updateTrayOpenAccelerator(shortcut: string): Promise<void> {
