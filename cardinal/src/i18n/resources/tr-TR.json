@@ -125,6 +125,9 @@
     "trayIcon": {
       "label": "Tepsi simgesini göster"
     },
+    "launchMinimizedToTray": {
+      "label": "Başlangıçta tepsiye küçült"
+    },
     "sortingLimit": {
       "label": "Sıralama sınırı"
     },

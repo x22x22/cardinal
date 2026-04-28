@@ -125,6 +125,9 @@
     "trayIcon": {
       "label": "트레이 아이콘 표시"
     },
+    "launchMinimizedToTray": {
+      "label": "시작 시 트레이로 최소화"
+    },
     "sortingLimit": {
       "label": "정렬 한도"
     },

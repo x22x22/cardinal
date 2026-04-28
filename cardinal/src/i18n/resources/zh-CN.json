@@ -168,6 +168,9 @@
     "trayIcon": {
       "label": "显示托盘图标"
     },
+    "launchMinimizedToTray": {
+      "label": "启动后最小化到托盘"
+    },
     "windowActivationShortcut": {
       "label": "窗口唤起快捷键",
       "placeholder": "留空则不启用",

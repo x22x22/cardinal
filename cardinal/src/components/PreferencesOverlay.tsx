@@ -16,6 +16,8 @@ type PreferencesOverlayProps = {
   onSortThresholdChange: (value: number) => void;
   trayIconEnabled: boolean;
   onTrayIconEnabledChange: (enabled: boolean) => void;
+  launchMinimizedToTray: boolean;
+  onLaunchMinimizedToTrayChange: (enabled: boolean) => void;
   windowActivationShortcut: string;
   defaultWindowActivationShortcut: string;
   onWindowActivationShortcutChange: (shortcut: string) => Promise<void>;
@@ -36,6 +38,8 @@ export function PreferencesOverlay({
   onSortThresholdChange,
   trayIconEnabled,
   onTrayIconEnabledChange,
+  launchMinimizedToTray,
+  onLaunchMinimizedToTrayChange,
   windowActivationShortcut,
   defaultWindowActivationShortcut,
   onWindowActivationShortcutChange,
@@ -291,6 +295,21 @@ export function PreferencesOverlay({
                   checked={trayIconEnabled}
                   onChange={(event) => onTrayIconEnabledChange(event.target.checked)}
                   aria-label={t('preferences.trayIcon.label')}
+                />
+                <span className="preferences-switch__track" aria-hidden="true" />
+              </label>
+            </div>
+          </div>
+          <div className="preferences-row">
+            <p className="preferences-label">{t('preferences.launchMinimizedToTray.label')}</p>
+            <div className="preferences-control">
+              <label className="preferences-switch">
+                <input
+                  className="preferences-switch__input"
+                  type="checkbox"
+                  checked={launchMinimizedToTray}
+                  onChange={(event) => onLaunchMinimizedToTrayChange(event.target.checked)}
+                  aria-label={t('preferences.launchMinimizedToTray.label')}
                 />
                 <span className="preferences-switch__track" aria-hidden="true" />
               </label>

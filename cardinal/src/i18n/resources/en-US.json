@@ -169,6 +169,9 @@
     "trayIcon": {
       "label": "Show tray icon"
     },
+    "launchMinimizedToTray": {
+      "label": "Minimize to tray on startup"
+    },
     "windowActivationShortcut": {
       "label": "Window activation shortcut",
       "placeholder": "Leave blank to disable",

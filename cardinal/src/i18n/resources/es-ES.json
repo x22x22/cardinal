@@ -125,6 +125,9 @@
     "trayIcon": {
       "label": "Mostrar icono en la bandeja"
     },
+    "launchMinimizedToTray": {
+      "label": "Minimizar a la bandeja al iniciar"
+    },
     "sortingLimit": {
       "label": "Límite de ordenación"
     },

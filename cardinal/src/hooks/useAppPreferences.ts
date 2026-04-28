@@ -5,6 +5,10 @@ import { OPEN_PREFERENCES_EVENT } from '../constants/appEvents';
 import { getBrowserLanguage } from '../i18n/config';
 import { applyThemePreference, persistThemePreference } from '../theme';
 import { setTrayEnabled, updateTrayOpenAccelerator } from '../tray';
+import {
+  getStoredLaunchMinimizedToTray,
+  persistLaunchMinimizedToTray,
+} from '../launchMinimizedToTrayPreference';
 import { getStoredTrayIconEnabled, persistTrayIconEnabled } from '../trayIconPreference';
 import { setWatchConfig } from '../utils/watchConfig';
 import { setWindowActivationShortcut } from '../utils/globalShortcuts';
@@ -34,6 +38,8 @@ type UseAppPreferencesResult = {
   closePreferences: () => void;
   trayIconEnabled: boolean;
   setTrayIconEnabled: (enabled: boolean) => void;
+  launchMinimizedToTray: boolean;
+  setLaunchMinimizedToTray: (enabled: boolean) => void;
   windowActivationShortcut: string;
   defaultWindowActivationShortcut: string;
   handleWindowActivationShortcutChange: (shortcut: string) => Promise<void>;
@@ -62,8 +68,12 @@ export function useAppPreferences({
   const { watchRoot, setWatchRoot, defaultWatchRoot } = useWatchRoot();
   const { ignorePaths, setIgnorePaths, defaultIgnorePaths } = useIgnorePaths();
   const logicStartedRef = useRef(false);
+  const startupMinimizeHandledRef = useRef(false);
   const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
   const [trayIconEnabled, setTrayIconEnabled] = useState<boolean>(() => getStoredTrayIconEnabled());
+  const [launchMinimizedToTray, setLaunchMinimizedToTray] = useState<boolean>(() =>
+    getStoredLaunchMinimizedToTray(),
+  );
   const [windowActivationShortcut, setWindowActivationShortcutState] = useState<string>(() =>
     getStoredWindowActivationShortcut(),
   );
@@ -71,8 +81,27 @@ export function useAppPreferences({
 
   useEffect(() => {
     persistTrayIconEnabled(trayIconEnabled);
-    void setTrayEnabled(trayIconEnabled);
-  }, [trayIconEnabled]);
+    persistLaunchMinimizedToTray(launchMinimizedToTray);
+    void setTrayEnabled(trayIconEnabled || launchMinimizedToTray);
+  }, [launchMinimizedToTray, trayIconEnabled]);
+
+  useEffect(() => {
+    if (startupMinimizeHandledRef.current) {
+      return;
+    }
+
+    startupMinimizeHandledRef.current = true;
+    if (launchMinimizedToTray) {
+      void setTrayEnabled(true, { silent: true }).then((initialized) => {
+        if (initialized) {
+          return invoke('hide_main_window');
+        }
+        return invoke('activate_main_window');
+      });
+    } else {
+      void invoke('activate_main_window');
+    }
+  }, [launchMinimizedToTray]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -147,6 +176,7 @@ export function useAppPreferences({
 
   const handleResetPreferences = useCallback(() => {
     setTrayIconEnabled(false);
+    setLaunchMinimizedToTray(true);
     void handleWindowActivationShortcutChange('').catch((error) => {
       console.error('Failed to reset window activation shortcut', error);
     });
@@ -164,6 +194,8 @@ export function useAppPreferences({
     closePreferences,
     trayIconEnabled,
     setTrayIconEnabled,
+    launchMinimizedToTray,
+    setLaunchMinimizedToTray,
     windowActivationShortcut,
     defaultWindowActivationShortcut: '',
     handleWindowActivationShortcutChange,

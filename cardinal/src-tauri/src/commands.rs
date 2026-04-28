@@ -474,8 +474,9 @@ pub async fn toggle_main_window(app: AppHandle) {
 }
 
 #[tauri::command]
-pub async fn set_tray_activation_policy(app: AppHandle, enabled: bool) {
+pub async fn set_tray_activation_policy(app: AppHandle, enabled: bool, silent: Option<bool>) {
     let app_handle = app.clone();
+    let should_activate = !silent.unwrap_or(false);
     if let Err(e) = app.run_on_main_thread(move || {
         let policy = if enabled {
             ActivationPolicy::Accessory
@@ -485,7 +486,9 @@ pub async fn set_tray_activation_policy(app: AppHandle, enabled: bool) {
         if let Err(e) = app_handle.set_activation_policy(policy) {
             error!("Failed to set activation policy: {e:?}");
         }
-        activate_main_window_impl(&app_handle);
+        if should_activate {
+            activate_main_window_impl(&app_handle);
+        }
     }) {
         error!("Failed to dispatch activation policy update: {e:?}");
     }

@@ -115,6 +115,9 @@
     "trayIcon": {
       "label": "ट्रे आइकन दिखाएँ"
     },
+    "launchMinimizedToTray": {
+      "label": "स्टार्टअप पर ट्रे में मिनिमाइज़ करें"
+    },
     "sortingLimit": {
       "label": "सॉर्टिंग सीमा"
     },
