@@ -289,6 +289,17 @@ pub struct WalkData<'w, F: Fn() -> bool> {
     ignore_matcher: IgnoreMatcher,
     /// If set, metadata will be collected for each file node(folder node will get free metadata).
     need_metadata: bool,
+    /// 本次遍历最多处理的条目数；`None` 表示不限。
+    ///
+    /// 增量扫描遇到大目录（`node_modules` 等）时会递归整棵子树并逐个 stat，
+    /// 一次事件就能吃掉几十万次系统调用。设上限后遍历会提前收敛，
+    /// 剩余节点交给后续事件或全量 rescan 处理。
+    node_budget: Option<usize>,
+    /// 串行遍历（单线程）。
+    ///
+    /// 增量扫描默认串行：大目录递归若用全局 rayon 池会同时占满所有核心，
+    /// 表现为「后台运行时 CPU 突然很高」。串行慢一些，但把 CPU 上限收到单核。
+    serial: bool,
 }
 
 impl<F> std::fmt::Debug for WalkData<'_, F>
@@ -304,6 +315,8 @@ where
             .field("ignore_directories", &self.ignore_directories)
             .field("ignore_matcher_empty", &self.ignore_matcher.is_empty())
             .field("need_metadata", &self.need_metadata)
+            .field("node_budget", &self.node_budget)
+            .field("serial", &self.serial)
             .finish()
     }
 }
@@ -322,6 +335,8 @@ impl<'w> WalkData<'w, fn() -> bool> {
             ignore_directories: &[],
             ignore_matcher: IgnoreMatcher::new(&[]),
             need_metadata,
+            node_budget: None,
+            serial: false,
         }
     }
 }
@@ -341,7 +356,36 @@ impl<'w, F: Fn() -> bool> WalkData<'w, F> {
             ignore_directories,
             ignore_matcher: IgnoreMatcher::new(ignore_directories),
             need_metadata,
+            node_budget: None,
+            serial: false,
         }
+    }
+
+    /// 串行遍历（避免增量扫描占满所有 CPU 核心）。
+    #[must_use]
+    pub fn with_serial(mut self, serial: bool) -> Self {
+        self.serial = serial;
+        self
+    }
+
+    /// 设置本次遍历的条目预算（用于增量扫描限制单次成本）。
+    #[must_use]
+    pub fn with_node_budget(mut self, budget: Option<usize>) -> Self {
+        self.node_budget = budget;
+        self
+    }
+
+    /// 当前已处理条目数（文件 + 目录）。
+    #[must_use]
+    pub fn processed_entries(&self) -> usize {
+        self.num_files.load(Ordering::Relaxed) + self.num_dirs.load(Ordering::Relaxed)
+    }
+
+    /// 是否已触及条目预算。
+    #[must_use]
+    pub fn budget_exhausted(&self) -> bool {
+        self.node_budget
+            .is_some_and(|budget| self.processed_entries() >= budget)
     }
 
     fn should_ignore(&self, path: &Path) -> bool {
@@ -407,6 +451,10 @@ pub fn walk_it<F: Fn() -> bool + Send + Sync>(walk_data: &WalkData<'_, F>) -> Op
 /// Note: this function will create a Node for the given path even if it's
 /// missing or inaccessible, but the metadata will be None in that case.
 fn walk<F: Fn() -> bool + Send + Sync>(path: &Path, walk_data: &WalkData<'_, F>) -> Option<Node> {
+    // 预算耗尽即停止深入：并行遍历下可能有少量越界，属可接受误差。
+    if walk_data.budget_exhausted() {
+        return None;
+    }
     let metadata = metadata_of_path(path);
     let children = if metadata.as_ref().map(|x| x.is_dir()).unwrap_or_default() {
         walk_data.num_dirs.fetch_add(1, Ordering::Relaxed);
@@ -414,10 +462,8 @@ fn walk<F: Fn() -> bool + Send + Sync>(path: &Path, walk_data: &WalkData<'_, F>)
         match read_dir {
             Ok(entries) => {
                 let cancelled = AtomicBool::new(false);
-                let results: Vec<_> = entries
-                    .into_iter()
-                    .par_bridge()
-                    .map(|entry| {
+                let mapper = |entry: Result<fs::DirEntry, std::io::Error>| -> Option<Node> {
+                    {
                         match &entry {
                             Ok(entry) => {
                                 if walk_data.is_cancelled() {
@@ -457,8 +503,14 @@ fn walk<F: Fn() -> bool + Send + Sync>(path: &Path, walk_data: &WalkData<'_, F>)
                             }
                             Err(_) => None,
                         }
-                    })
-                    .collect();
+                    }
+                };
+                // 增量扫描走串行，避免大目录递归同时占满所有核心。
+                let results: Vec<_> = if walk_data.serial {
+                    entries.into_iter().map(&mapper).collect()
+                } else {
+                    entries.into_iter().par_bridge().map(&mapper).collect()
+                };
                 if cancelled.load(Ordering::Acquire) {
                     return None;
                 }
@@ -1047,5 +1099,189 @@ mod tests {
                 assert!(time.elapsed() < Duration::from_secs(1));
             });
         });
+    }
+
+    #[test]
+    fn test_node_budget_stops_deep_walk() {
+        let temp_dir = TempDir::new("budget_stops").expect("temp dir");
+        let root = temp_dir.path();
+        // 造一棵比预算大得多的树
+        for dir_index in 0..20 {
+            let dir = root.join(format!("dir-{dir_index}"));
+            fs::create_dir_all(&dir).expect("mkdir");
+            for file_index in 0..20 {
+                fs::File::create(dir.join(format!("f-{file_index}.txt"))).expect("touch");
+            }
+        }
+
+        let walk_data = WalkData::simple(root, true).with_node_budget(Some(16));
+        let _ = walk_it_without_root_chain(&walk_data);
+
+        // 预算是硬上限：并行下有少量越界，但绝不能扫完整棵树（400+ 条目）
+        assert!(
+            walk_data.processed_entries() < 200,
+            "预算应显著限制遍历规模，实际 {}",
+            walk_data.processed_entries()
+        );
+        assert!(walk_data.budget_exhausted());
+    }
+
+    #[test]
+    fn test_serial_and_parallel_walk_agree() {
+        let temp_dir = TempDir::new("serial_vs_parallel").expect("temp dir");
+        let root = temp_dir.path();
+        for dir_index in 0..5 {
+            let dir = root.join(format!("d{dir_index}"));
+            fs::create_dir_all(&dir).expect("mkdir");
+            for file_index in 0..5 {
+                fs::File::create(dir.join(format!("f{file_index}.txt"))).expect("touch");
+            }
+        }
+
+        let serial_data = WalkData::simple(root, false).with_serial(true);
+        let serial = walk_it_without_root_chain(&serial_data).expect("serial walk");
+
+        let parallel_data = WalkData::simple(root, false).with_serial(false);
+        let parallel = walk_it_without_root_chain(&parallel_data).expect("parallel walk");
+
+        // 串行只是调度方式不同，产出的树必须完全一致
+        assert_eq!(serial.children.len(), parallel.children.len());
+        assert_eq!(
+            serial_data.num_files.load(Ordering::Relaxed),
+            parallel_data.num_files.load(Ordering::Relaxed)
+        );
+        assert_eq!(
+            serial_data.num_dirs.load(Ordering::Relaxed),
+            parallel_data.num_dirs.load(Ordering::Relaxed)
+        );
+    }
+}
+
+#[cfg(test)]
+mod wework_ignore_patterns {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_wework_ignore_patterns() {
+        let root = "/Users/kdump/Library/Containers/com.tencent.WeWorkMac/Data/Documents/Profiles/D4D1612B2A50142004A785308E4F4E0B/Caches/Files";
+        let path = |suffix: &str| PathBuf::from(format!("{root}/{suffix}"));
+
+        let rules: Vec<PathBuf> = vec![
+            format!("{root}/**/.ArchiveServiceTemp*").into(),
+            format!("{root}/**/*.exe").into(),
+            format!("{root}/**/*.jar").into(),
+            format!("{root}/**/*.log").into(),
+            format!("{root}/**/*.gz").into(),
+            format!("{root}/**/*.0[0-9][0-9]").into(),
+        ];
+        let matcher = IgnoreMatcher::new(&rules);
+
+        let cases = [
+            (
+                "2023-07/1F05/.ArchiveServiceTemp.sb-194e6e5d-fbrVgH/deploy/k8s.yaml",
+                true,
+                "归档临时目录",
+            ),
+            (
+                "2023-07/1F05/.ArchiveServiceTemp.sb-x/repo/.git/config",
+                true,
+                "归档目录里的 git",
+            ),
+            (
+                "2026-11/abc/navicat163_premium_en_x64.exe",
+                true,
+                "exe 安装包",
+            ),
+            ("2026-11/abc/Firefox Setup 106.0.5.exe", true, "带空格 exe"),
+            ("2026-11/abc/commons-lang3-3.9.jar", true, "jar"),
+            ("2026-11/abc/training copy 3.log", true, "log"),
+            (
+                "2026-11/abc/helm-v3.13.0-linux-amd64.tar.gz",
+                true,
+                "tar.gz",
+            ),
+            ("2026-11/abc/biz-images.zip.001", true, "分卷001"),
+            ("2026-11/abc/biz-images.zip.002", true, "分卷002"),
+            (
+                "2026-11/abc/【Java_杭州】宋有超 8年.pdf",
+                false,
+                "PDF 必须保留",
+            ),
+            ("2026-11/abc/AIS部署架构图.html", false, "HTML 必须保留"),
+            ("2026-11/abc/DEPLOY-RECORD.md", false, "MD 必须保留"),
+            ("2026-11/abc/交付包.zip", false, "zip 保留（名字有意义）"),
+            (
+                "2026-11/abc/腾讯云TSF产品及开发部署综合介绍.7z",
+                false,
+                "7z 保留",
+            ),
+            ("2026-11/abc/渠道.rar", false, "rar 保留"),
+        ];
+
+        let mut failures = Vec::new();
+        for (suffix, expected, label) in cases {
+            let actual = matcher.is_ignored(&path(suffix));
+            let mark = if actual == expected { "OK  " } else { "FAIL" };
+            println!("{mark} {label:<22} ignored={actual} (期望 {expected})");
+            if actual != expected {
+                failures.push((label, actual, expected));
+            }
+        }
+        assert!(failures.is_empty(), "规则不符预期: {failures:?}");
+    }
+}
+
+#[cfg(test)]
+mod git_dir_pattern {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    /// `**/.git` 匹配 `.git` 目录本身，遍历时整棵子树直接丢弃（不 stat、不计数）；
+    /// 旧写法 `.git/**` 只匹配目录内部，`.git` 节点本身仍会被收录。
+    #[test]
+    fn test_git_dir_pattern_matches_directory_itself() {
+        let legacy = IgnoreMatcher::new(&[PathBuf::from(".git/**")]);
+        let current = IgnoreMatcher::new(&[PathBuf::from("**/.git")]);
+
+        for path in ["/root/.git", "/root/a/b/.git"] {
+            assert!(
+                !legacy.is_ignored(Path::new(path)),
+                "旧规则不应匹配 .git 目录本身: {path}"
+            );
+            assert!(
+                current.is_ignored(Path::new(path)),
+                "**/.git 必须匹配 .git 目录本身: {path}"
+            );
+        }
+
+        for path in ["/root/a/b/.git/config", "/root/a/b/.git/objects/50/bc5abd"] {
+            assert!(
+                legacy.is_ignored(Path::new(path)),
+                "旧规则应匹配目录内部: {path}"
+            );
+            assert!(
+                current.is_ignored(Path::new(path)),
+                "**/.git 应匹配目录内部: {path}"
+            );
+        }
+    }
+
+    /// 不能误伤名字相近的路径（`.github`、`git`）。
+    #[test]
+    fn test_git_dir_pattern_does_not_overreach() {
+        let current = IgnoreMatcher::new(&[PathBuf::from("**/.git")]);
+
+        for path in [
+            "/root/a/b/real.txt",
+            "/root/a/.github/workflows/ci.yml",
+            "/root/a/git/config",
+            "/root/a/.gitignore",
+        ] {
+            assert!(
+                !current.is_ignored(Path::new(path)),
+                "**/.git 不应匹配: {path}"
+            );
+        }
     }
 }

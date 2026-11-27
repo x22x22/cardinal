@@ -7,13 +7,16 @@ type StateProps = {
   message?: React.ReactNode;
 };
 
-export type DisplayState = 'loading' | 'error' | 'empty' | 'results';
+export type DisplayState = 'loading' | 'error' | 'idle' | 'empty' | 'results';
 type EmptyState = Exclude<DisplayState, 'results'>;
 
 type StateDisplayProps = {
   state: EmptyState;
   message?: string | null;
   query?: string;
+  /** 索引尚未就绪：`idle` 态展示构建进度而不是「请输入关键词」。 */
+  indexing?: boolean;
+  scannedFiles?: number;
 };
 
 const State = ({ icon, title, message }: StateProps): React.JSX.Element => (
@@ -27,7 +30,13 @@ const State = ({ icon, title, message }: StateProps): React.JSX.Element => (
 );
 
 // Consistent empty/error/loading presentation inside the results pane.
-export function StateDisplay({ state, message, query }: StateDisplayProps): React.JSX.Element {
+export function StateDisplay({
+  state,
+  message,
+  query,
+  indexing = false,
+  scannedFiles = 0,
+}: StateDisplayProps): React.JSX.Element {
   const { t } = useTranslation();
   if (state === 'loading') {
     return <State icon={<div className="spinner" />} title={t('stateDisplay.loading')} />;
@@ -39,6 +48,41 @@ export function StateDisplay({ state, message, query }: StateDisplayProps): Reac
         icon={<div className="error-icon">!</div>}
         title={t('stateDisplay.error')}
         message={message}
+      />
+    );
+  }
+
+  if (state === 'idle') {
+    // 未输入关键词：索引没就绪就报进度，就绪了引导用户开始搜索。
+    if (indexing) {
+      return (
+        <State
+          icon={<div className="spinner" />}
+          title={t('stateDisplay.indexingTitle')}
+          message={t('stateDisplay.indexingMessage', { count: scannedFiles })}
+        />
+      );
+    }
+    return (
+      <State
+        icon={
+          <svg
+            width="72"
+            height="72"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        }
+        title={t('stateDisplay.idleTitle')}
+        message={t('stateDisplay.idleMessage')}
       />
     );
   }

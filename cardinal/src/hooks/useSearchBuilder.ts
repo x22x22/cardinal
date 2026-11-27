@@ -63,18 +63,7 @@ export type SearchSuggestionState = {
 export const SUGGESTED_EXTENSION_GROUPS = [
   {
     key: 'document',
-    extensions: [
-      'md',
-      'txt',
-      'pdf',
-      'doc',
-      'docx',
-      'ppt',
-      'pptx',
-      'xls',
-      'xlsx',
-      'csv',
-    ] as const,
+    extensions: ['md', 'txt', 'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv'] as const,
   },
   {
     key: 'development',
@@ -305,7 +294,11 @@ function activeTokenBounds(input: string): { start: number; end: number; token: 
       token: input.slice(start, trimmedEnd),
     };
   }
-  const lastWhitespace = Math.max(leading.lastIndexOf(' '), leading.lastIndexOf('\n'), leading.lastIndexOf('\t'));
+  const lastWhitespace = Math.max(
+    leading.lastIndexOf(' '),
+    leading.lastIndexOf('\n'),
+    leading.lastIndexOf('\t'),
+  );
   const start = lastWhitespace + 1;
   return {
     start,
@@ -360,7 +353,9 @@ export function applySearchAutocomplete(
   suggestion: SearchAutocompleteSuggestion,
 ): string {
   const { start, end } = activeTokenBounds(input);
-  const replacement = suggestion.insertText.endsWith(':') ? suggestion.insertText : `${suggestion.insertText} `;
+  const replacement = suggestion.insertText.endsWith(':')
+    ? suggestion.insertText
+    : `${suggestion.insertText} `;
   return `${input.slice(0, start)}${replacement}${input.slice(end)}`;
 }
 
@@ -377,10 +372,7 @@ export function getPathAutocompleteSuggestions(
 
   const operator = pathMatch[1];
   const rawValue = unquoteSearchValue(pathMatch[2]);
-  const candidates = [
-    ...recentPaths,
-    ...buildPathSuggestions(rawValue, watchRoot),
-  ];
+  const candidates = [...recentPaths, ...buildPathSuggestions(rawValue, watchRoot)];
   const unique = Array.from(new Set(candidates.filter((item) => item.length > 0)));
   return unique
     .filter((item) => rawValue.length === 0 || item.toLowerCase().includes(rawValue.toLowerCase()))
@@ -506,20 +498,27 @@ export function useSearchBuilder(
   const initialParsed = parseSearchInput(initialQuery, autocompleteConfig);
   const [keywordInputState, setKeywordInputState] = useState(initialQuery);
   const [filters, setFilters] = useState<SearchFilters>(initialParsed.filters);
-  const [inputControlsFilters, setInputControlsFilters] = useState(initialParsed.hasStructuredFilters);
+  const [inputControlsFilters, setInputControlsFilters] = useState(
+    initialParsed.hasStructuredFilters,
+  );
   const [recentPaths, setRecentPaths] = useState<string[]>([]);
 
-  const setKeywordInput = useCallback((value: string) => {
-    setKeywordInputState(value);
-    const parsed = parseSearchInput(value, autocompleteConfig);
-    setInputControlsFilters((prev) => parsed.hasStructuredFilters || (prev && value.trim().length > 0));
-    setFilters((prev) => {
-      if (!parsed.hasStructuredFilters && !inputControlsFilters) {
-        return prev;
-      }
-      return parsed.filters;
-    });
-  }, [autocompleteConfig, inputControlsFilters]);
+  const setKeywordInput = useCallback(
+    (value: string) => {
+      setKeywordInputState(value);
+      const parsed = parseSearchInput(value, autocompleteConfig);
+      setInputControlsFilters(
+        (prev) => parsed.hasStructuredFilters || (prev && value.trim().length > 0),
+      );
+      setFilters((prev) => {
+        if (!parsed.hasStructuredFilters && !inputControlsFilters) {
+          return prev;
+        }
+        return parsed.filters;
+      });
+    },
+    [autocompleteConfig, inputControlsFilters],
+  );
 
   const setTypeFilter = useCallback((value: SearchTypeFilter) => {
     setInputControlsFilters(false);
@@ -564,16 +563,19 @@ export function useSearchBuilder(
     setFilters((prev) => ({ ...prev, pathMode: value }));
   }, []);
 
-  const rememberCurrentPath = useCallback((value?: string) => {
-    const path = (value ?? filters.pathInput).trim();
-    if (!path) {
-      return;
-    }
-    setRecentPaths((prev) => {
-      const next = [path, ...prev.filter((item) => item !== path)];
-      return next.slice(0, 6);
-    });
-  }, [filters.pathInput]);
+  const rememberCurrentPath = useCallback(
+    (value?: string) => {
+      const path = (value ?? filters.pathInput).trim();
+      if (!path) {
+        return;
+      }
+      setRecentPaths((prev) => {
+        const next = [path, ...prev.filter((item) => item !== path)];
+        return next.slice(0, 6);
+      });
+    },
+    [filters.pathInput],
+  );
 
   const clearFilter = useCallback((id: SearchChip['id']) => {
     setInputControlsFilters(false);

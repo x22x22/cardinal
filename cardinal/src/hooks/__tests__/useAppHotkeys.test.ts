@@ -28,6 +28,7 @@ type HookProps = {
   focusSearchInput: () => void;
   navigateSelection: (delta: 1 | -1, options?: { extend?: boolean }) => void;
   triggerQuickLook: () => void;
+  resultOpenShortcut: string;
 };
 
 describe('useAppHotkeys', () => {
@@ -47,6 +48,7 @@ describe('useAppHotkeys', () => {
         focusSearchInput,
         navigateSelection,
         triggerQuickLook,
+        resultOpenShortcut: 'Command+O',
         ...overrides,
       },
     });
@@ -78,6 +80,7 @@ describe('useAppHotkeys', () => {
 
     const openEvent = new KeyboardEvent('keydown', {
       key: 'o',
+      code: 'KeyO',
       metaKey: true,
       cancelable: true,
     });
@@ -220,6 +223,7 @@ describe('useAppHotkeys', () => {
       focusSearchInput,
       navigateSelection,
       triggerQuickLook,
+      resultOpenShortcut: 'Command+O',
     });
 
     navigateSelection.mockClear();
@@ -238,5 +242,23 @@ describe('useAppHotkeys', () => {
 
     unmount();
     expect(quickLookUnlisten).toHaveBeenCalled();
+  });
+
+  it('opens selected results with a configured Enter shortcut', () => {
+    renderHotkeys({ resultOpenShortcut: 'Enter' });
+
+    const enterEvent = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      cancelable: true,
+    });
+
+    act(() => {
+      window.dispatchEvent(enterEvent);
+    });
+
+    expect(enterEvent.defaultPrevented).toBe(true);
+    expect(mockedOpenResultPath).toHaveBeenCalledWith('/tmp/a');
+    expect(mockedOpenResultPath).toHaveBeenCalledWith('/tmp/b');
   });
 });

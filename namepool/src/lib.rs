@@ -1,6 +1,7 @@
 #![feature(str_from_raw_parts)]
 use core::str;
 use parking_lot::Mutex;
+use rayon::prelude::*;
 use regex::Regex;
 use search_cancel::CancellationToken;
 use std::collections::BTreeSet;
@@ -58,19 +59,83 @@ impl NamePool {
         unsafe { str::from_raw_parts(existing.as_ptr(), existing.len()) }
     }
 
+    /// 并行扫描名称池时的分块大小。
+    ///
+    /// 必须能整除 [`search_cancel::CANCEL_CHECK_INTERVAL`]（0x10000），
+    /// 这样每块起点 `chunk_index * NAME_SCAN_CHUNK` 都是元素在池中的真实索引，
+    /// 取消检查的密度与单线程遍历时完全一致。
+    const NAME_SCAN_CHUNK: usize = 4096;
+
+    /// 一次性取出名称地址快照，然后并行扫描。
+    ///
+    /// 旧实现是 `for x in self.inner.lock().iter()` 的单线程线性扫描：锁在整个扫描期间
+    /// 被持有，且 `BTreeSet` 的指针追逐成为瓶颈。这里改为：
+    ///
+    /// 1. 持锁一次，把每个 `Box<str>` 的堆缓冲地址与长度拷成 `Vec`（顺序写、开销很小），
+    ///    随后立即释放锁，避免长时间阻塞 `push()`；
+    /// 2. 用 rayon 按块并行扫描，每个元素仍然用**它在池中的真实位置**调用
+    ///    `is_cancelled_sparse`，取消语义与顺序实现逐元素一致；
+    /// 3. 结果合并回 `BTreeSet<&str>`，与顺序实现返回完全相同的匹配集合（顺序也一致）。
+    ///
+    /// 安全性：`NamePool` 只插入不删除、名称内容永不修改（这正是 `push()` 返回稳定
+    /// `&str` 的既有前提），所以已快照的堆地址在扫描期间始终有效。
+    fn search_parallel<'pool>(
+        &'pool self,
+        min_len: usize,
+        cancellation_token: CancellationToken,
+        predicate: impl Fn(&str) -> bool + Sync,
+    ) -> Option<BTreeSet<&'pool str>> {
+        let snapshot: Vec<(usize, usize)> = {
+            let inner = self.inner.lock();
+            inner
+                .iter()
+                .map(|name| (name.as_ptr() as usize, name.len()))
+                .collect()
+        };
+
+        if snapshot.is_empty() {
+            // 空池：与旧实现一致，返回空集合（即使 token 已取消）。
+            return Some(BTreeSet::new());
+        }
+
+        // 旧实现会在索引 0 处先检查一次取消，这里保持同样的快速返回。
+        cancellation_token.is_cancelled_sparse(0)?;
+
+        snapshot
+            .par_chunks(Self::NAME_SCAN_CHUNK)
+            .enumerate()
+            .try_fold(BTreeSet::new, |mut matched, (chunk_index, chunk)| {
+                let chunk_start = chunk_index * Self::NAME_SCAN_CHUNK;
+                for (offset, &(address, len)) in chunk.iter().enumerate() {
+                    // 索引必须是元素在池中的真实位置（chunk_start + offset）。
+                    cancellation_token.is_cancelled_sparse(chunk_start + offset)?;
+                    if len < min_len {
+                        continue;
+                    }
+                    // SAFETY: 地址来自 `NamePool` 内部的 `Box<str>` 堆缓冲；池只增不删，
+                    // 字符串内容不会被修改或释放，因此这里重建的 `&'pool str` 有效。
+                    let name: &'pool str =
+                        unsafe { str::from_raw_parts(address as *const u8, len) };
+                    if predicate(name) {
+                        matched.insert(name);
+                    }
+                }
+                Some(matched)
+            })
+            .try_reduce(BTreeSet::new, |mut left, right| {
+                left.extend(right);
+                Some(left)
+            })
+    }
+
     pub fn search_substr<'search, 'pool: 'search>(
         &'pool self,
         substr: &'search str,
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
-        let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
-            cancellation_token.is_cancelled_sparse(i)?;
-            if x.contains(substr) {
-                result.insert(unsafe { str::from_raw_parts(x.as_ptr(), x.len()) });
-            }
-        }
-        Some(result)
+        self.search_parallel(substr.len(), cancellation_token, |name| {
+            name.contains(substr)
+        })
     }
 
     pub fn search_suffix<'search, 'pool: 'search>(
@@ -78,14 +143,9 @@ impl NamePool {
         suffix: &'search str,
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
-        let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
-            cancellation_token.is_cancelled_sparse(i)?;
-            if x.ends_with(suffix) {
-                result.insert(unsafe { str::from_raw_parts(x.as_ptr(), x.len()) });
-            }
-        }
-        Some(result)
+        self.search_parallel(suffix.len(), cancellation_token, |name| {
+            name.ends_with(suffix)
+        })
     }
 
     pub fn search_prefix<'search, 'pool: 'search>(
@@ -93,15 +153,9 @@ impl NamePool {
         prefix: &'search str,
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
-        let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
-            cancellation_token.is_cancelled_sparse(i)?;
-            if x.starts_with(prefix) {
-                result.insert(unsafe { str::from_raw_parts(x.as_ptr(), x.len()) });
-            }
-        }
-
-        Some(result)
+        self.search_parallel(prefix.len(), cancellation_token, |name| {
+            name.starts_with(prefix)
+        })
     }
 
     pub fn search_regex<'search, 'pool: 'search>(
@@ -109,15 +163,7 @@ impl NamePool {
         pattern: &Regex,
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
-        let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
-            cancellation_token.is_cancelled_sparse(i)?;
-            let existing = unsafe { str::from_raw_parts(x.as_ptr(), x.len()) };
-            if pattern.is_match(existing) {
-                result.insert(existing);
-            }
-        }
-        Some(result)
+        self.search_parallel(0, cancellation_token, |name| pattern.is_match(name))
     }
 
     // `exact` should starts with a '\0', and ends with a '\0',
@@ -127,14 +173,7 @@ impl NamePool {
         exact: &'search str,
         cancellation_token: CancellationToken,
     ) -> Option<BTreeSet<&'pool str>> {
-        let mut result = BTreeSet::new();
-        for (i, x) in self.inner.lock().iter().enumerate() {
-            cancellation_token.is_cancelled_sparse(i)?;
-            if &**x == exact {
-                result.insert(unsafe { str::from_raw_parts(x.as_ptr(), x.len()) });
-            }
-        }
-        Some(result)
+        self.search_parallel(exact.len(), cancellation_token, |name| name == exact)
     }
 }
 

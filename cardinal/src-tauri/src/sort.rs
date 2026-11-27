@@ -1,5 +1,6 @@
 use fswalk::NodeFileType;
-use search_cache::{SearchResultNode, SlabIndex, SlabNodeMetadataCompact};
+use crate::multi_cache::GlobalIndex;
+use search_cache::{SearchResultNode, SlabNodeMetadataCompact};
 use serde::Deserialize;
 use std::{cmp::Ordering as StdOrdering, path::Path};
 
@@ -29,14 +30,14 @@ pub enum SortDirectionPayload {
 
 #[derive(Debug)]
 pub(crate) struct SortEntry {
-    pub(crate) slab_index: SlabIndex,
+    pub(crate) slab_index: GlobalIndex,
     node: SearchResultNode,
     path_key: String,
     name_key: String,
 }
 
 impl SortEntry {
-    pub(crate) fn new(slab_index: SlabIndex, node: SearchResultNode) -> Self {
+    pub(crate) fn new(slab_index: GlobalIndex, node: SearchResultNode) -> Self {
         let path_key = normalize_path(&node.path);
         let name_key = extract_filename(&node);
         Self {
@@ -121,6 +122,7 @@ fn compare_entries(a: &SortEntry, b: &SortEntry, sort: &SortStatePayload) -> Std
 mod tests {
     use super::*;
     use fswalk::NodeMetadata;
+    use search_cache::SlabIndex;
     use std::path::PathBuf;
 
     fn entry_with_metadata(
@@ -133,7 +135,7 @@ mod tests {
             metadata,
         };
 
-        SortEntry::new(SlabIndex::new(slab_index), node)
+        SortEntry::new(GlobalIndex { cache_id: 0, slab: SlabIndex::new(slab_index) }, node)
     }
 
     fn metadata_with_type(r#type: NodeFileType, size: u64) -> SlabNodeMetadataCompact {
@@ -166,7 +168,7 @@ mod tests {
         ];
 
         sort_entries(&mut entries, &sort_state);
-        let order: Vec<usize> = entries.iter().map(|entry| entry.slab_index.get()).collect();
+        let order: Vec<usize> = entries.iter().map(|entry| entry.slab_index.slab.get()).collect();
 
         assert_eq!(
             order,
@@ -188,7 +190,7 @@ mod tests {
         ];
 
         sort_entries(&mut entries, &sort_state);
-        let order: Vec<usize> = entries.iter().map(|entry| entry.slab_index.get()).collect();
+        let order: Vec<usize> = entries.iter().map(|entry| entry.slab_index.slab.get()).collect();
 
         assert_eq!(
             order,

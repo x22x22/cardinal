@@ -28,4 +28,6 @@ export type AppLifecycleStatus = 'Initializing' | 'Updating' | 'Ready';
 export type SearchResponsePayload = {
   results: number[];
   highlights?: string[];
+  /** 本页切片前的命中总数，前端据此判断是否还有下一页。 */
+  total?: number;
 };

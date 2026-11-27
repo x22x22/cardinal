@@ -1,27 +1,27 @@
-# Repository Guidelines
+# Cardinal Agent Notes
 
-## Project Structure & Module Organization
-- Desktop app lives in `cardinal/` (React UI in `src/`, Tauri/native glue in `src-tauri/`, build output in `cardinal/dist/`).
-- Workspace crates (root `Cargo.toml`): `lsf/` (CLI), `cardinal-sdk/` (shared types), `fswalk/`, `fs-icon/`, `namepool/`, `query-segmentation/`, `search-cache/`, `search-cancel/`, `cardinal-syntax/`, `slab-mmap/` (mmap-backed slab for the cache), `was/` (CLI that streams FSEvents via the SDK).
-- Tests sit next to code; cross-crate cases belong in each crate’s `tests/` directory. Generated outputs (`target/`, `cardinal/dist/`, vendor bundles) stay out of commits.
-- Toolchain pinned via `rust-toolchain.toml` (`nightly-2025-05-09`); install with `rustup toolchain install nightly-2025-05-09`.
+## Toolchain And Boundaries
+- Rust is pinned by `rust-toolchain.toml` to `nightly-2025-12-11`; `search-cache/src/lib.rs` uses `#![feature(str_from_raw_parts)]`, so stable builds will fail.
+- The root Cargo workspace excludes the desktop app (`Cargo.toml` has `exclude = ["cardinal"]`). Root `cargo check/test/clippy/fmt` only cover the shared crates and CLIs, not `cardinal/src-tauri`.
+- The desktop app is split across `cardinal/` (React/Vite frontend) and `cardinal/src-tauri/` (Tauri shell). The Tauri crate pulls shared crates by relative path, so changes in shared Rust code can require both root-workspace and Tauri verification.
 
-## Build, Test, and Development Commands
-- `cargo check --workspace` — fast compile validation for all crates.
-- `cargo test --workspace` or `cargo test -p <crate>` — run full or targeted suites.
-- `cargo clippy --workspace --all-targets` — lint; fix or explain warnings. `cargo fmt --all` — enforce workspace rustfmt settings.
-- Frontend: `cd cardinal && npm ci` (install), `npm run dev` (Vite), `npm run tauri dev -- --release --features dev` (desktop shell), `npm run build` (static bundle), `npm run tauri build` (release binaries).
+## Verified Commands
+- Shared Rust workspace CI order: `cargo fmt --all -- --check` -> `cargo clippy --workspace --all-targets -- -D warnings` -> `cargo check --workspace --all-targets` -> `cargo test --workspace`.
+- Tauri Rust CI order from `cardinal/src-tauri`: `cargo fmt -- --check` -> `cargo clippy --all-targets -- -D warnings` -> `cargo check --all-targets` -> `cargo test`.
+- Frontend CI order from `cardinal/`: `npm ci` -> `npm run format:check` -> `npm run typecheck` -> `npm test -- --run` -> `npm run build`.
+- Full desktop dev loop from `cardinal/`: `npm run tauri dev -- --release --features dev`.
+- Production desktop bundle from `cardinal/`: `npm run tauri build`.
 
-## Coding Style & Naming Conventions
-- Rust: grouped imports, 4-space indent, `snake_case` for modules/functions, `PascalCase` for types/traits. Prefer explicit modules, return `anyhow::Result` from fallible APIs, and use `tracing` for structured logs.
-- React: components in `cardinal/src/components` use `PascalCase.tsx`; hooks/utilities export camelCase from kebab-case folders. Run `npm run format` or `npm run format:check` (Prettier). Keep Vite and `tsconfig*.json` settings intact.
+## Architecture Pointers
+- Frontend entrypoint is `cardinal/src/main.tsx`; it boots i18n, app menu, global shortcuts, and the Tauri event runtime before rendering `App`.
+- Main UI orchestration lives in `cardinal/src/App.tsx`; most behavior is pushed into hooks under `cardinal/src/hooks/`.
+- Tauri entrypoint is `cardinal/src-tauri/src/lib.rs`; commands are in `commands.rs`, and the filesystem scan / cache / event pipeline runs in `background.rs`.
+- `search-cache/` is the core indexing and query engine; many search semantics and Rust integration tests live under `search-cache/src/tests/`.
+- `lsf/` is an interactive CLI over the same cache engine; `was/` is a separate CLI that streams filesystem events via `cardinal-sdk`.
 
-## Testing Guidelines
-- Co-locate unit tests; add crate-level integration tests for cross-cutting behaviors.
-- Run `cargo test --workspace` after shared-crate changes; target `cargo test -p lsf` for query/indexing paths. Name tests for the behavior under test and include edge cases (search latency, indexing throughput, icon extraction).
-- UI/performance: per `TESTING.md`, `npm run build`, then profile in Chrome DevTools/Safari and monitor FPS/memory regressions.
-
-## Commit & Pull Request Guidelines
-- Use Conventional Commits (`feat:`, `fix:`, `chore:`) with scopes when helpful (e.g., `feat(fs-icon): cache lookups`); squash WIP commits.
-- PRs should list cargo/npm commands run, link issues, include UI screenshots when relevant, and call out risks (indexing throughput, search latency, icon extraction).
-- Avoid committing generated or vendor outputs; note any intentional lint allowlists or config deviations in the PR.
+## Repo-Specific Gotchas
+- Do not rely on `TESTING.md`; it is referenced by old instructions but does not exist in this checkout.
+- `cardinal/vite.config.ts` hardcodes dev server port `1420` with `strictPort: true`; if that port is busy, `tauri dev` fails instead of picking another port.
+- Vite ignores `cardinal/src-tauri/**` for file watching, so Rust-side edits require the Tauri process to rebuild; frontend hot reload will not see them.
+- `cardinal/src-tauri/tauri.conf.json` builds macOS bundles with `signingIdentity: "-"`; local `npm run tauri build` produces runnable `.app`/`.dmg` artifacts but skips notarization unless Apple credentials are provided.
+- The current checked-in `rust-toolchain.toml` (`nightly-2025-12-11`) is newer than `.github/workflows/rust-ci.yml` (`nightly-2025-05-09`). Trust the repo toolchain file for local work unless CI is being updated as part of the task.

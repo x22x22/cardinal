@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use cardinal_sdk::{EventFlag, FsEvent, ScanType, current_event_id};
-use cardinal_syntax::{optimize_query, parse_query};
+use cardinal_syntax::{Expr, Term, optimize_query, parse_query};
 use fswalk::{
     Node, NodeMetadata, WalkData, should_ignore_path_with_matcher, walk_it,
     walk_it_without_root_chain,
@@ -26,7 +26,7 @@ use std::{
     time::Instant,
 };
 use thin_vec::ThinVec;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use typed_num::Num;
 use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick, is_nfd_quick};
 
@@ -63,6 +63,11 @@ impl SearchOutcome {
 
     fn is_cancelled(&self) -> bool {
         self.nodes.is_none()
+    }
+
+    /// 搜索已完成且没有任何命中（区别于「被取消」）。
+    fn is_empty(&self) -> bool {
+        self.nodes.as_ref().is_some_and(|nodes| nodes.is_empty())
     }
 
     fn merge(self, other: Self) -> Self {
@@ -300,6 +305,22 @@ impl SearchCache {
             return Ok(SearchOutcome::cancelled());
         }
 
+        // 相对路径兜底：`dist/x.dmg` 这类不带 `/` 开头的输入会先被当作「相对监控根」的
+        // 路径展开。当文件其实比监控根深一层时（根是 `project`，文件在 `project/app/dist/`），
+        // 展开出的绝对路径对不上，精确查询会 0 命中。这时再按「路径后缀」重搜一次，
+        // 等价于用户写了 `**/dist/x.dmg`。只在零命中时触发，精确路径的语义与开销都不受影响。
+        let primary = match self.relative_path_suffix_query(line) {
+            Some(alt_line) if primary.is_empty() => {
+                let fallback =
+                    self.search_with_query_line(&alt_line, options, cancellation_token)?;
+                if fallback.is_cancelled() {
+                    return Ok(SearchOutcome::cancelled());
+                }
+                primary.merge(fallback)
+            }
+            _ => primary,
+        };
+
         // Best-effort APFS workaround: run primary query first, then optionally
         // run one alternate normalization form when the input is normalization-sensitive.
         let Some(alt_line) = self.alternate_normalization_query(line) else {
@@ -308,6 +329,24 @@ impl SearchCache {
 
         let secondary = self.search_with_query_line(&alt_line, options, cancellation_token)?;
         Ok(primary.merge(secondary))
+    }
+
+    /// 为「含 `/` 但不以 `/`、`~` 开头的相对路径词项」构造一条路径后缀查询。
+    ///
+    /// 做法是在原词项前补一个 `/`：分词器看到前导 `/` 会保持首段为 `Exact` 而不是转成
+    /// `Suffix`，于是 `dist/x.dmg` 变成「任意深度下的 dist/x.dmg」——也就是用户期望的
+    /// 路径后缀匹配。只在整个查询就是一个这样的词项时生效，避免影响复合查询、引号短语
+    /// 和过滤器，因此不会改变任何既有语义，也不会带来额外搜索。
+    fn relative_path_suffix_query(&self, line: &str) -> Option<String> {
+        let parsed = parse_query(line).ok()?;
+        let Expr::Term(Term::Word(word)) = &parsed.expr else {
+            return None;
+        };
+        let trimmed = word.trim();
+        if trimmed.starts_with('/') || trimmed.starts_with('~') || !trimmed.contains('/') {
+            return None;
+        }
+        Some(format!("/{trimmed}"))
     }
 
     fn search_with_query_line(
@@ -507,11 +546,31 @@ impl SearchCache {
         {
             self.remove_node(old_node);
         }
-        // For incremental data, we need metadata
+        // For incremental data, we need metadata.
+        // 增量扫描一律串行 + 带条目预算：大目录（node_modules 等）递归时
+        // `par_bridge` 会同时占满所有核心，这正是「后台运行时 CPU 突增」的来源；
+        // 预算则防止单条路径吃掉几十万次 stat。
         let walk_data = WalkData::new(path, self.file_nodes.ignore_paths(), true, || {
             self.stop.load(Ordering::Relaxed)
-        });
-        walk_it_without_root_chain(&walk_data).map(|node| {
+        })
+        .with_serial(true)
+        .with_node_budget(Some(INCREMENTAL_NODE_BUDGET));
+        let started = Instant::now();
+        let walked = walk_it_without_root_chain(&walk_data);
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let entries = walk_data.processed_entries();
+        let exhausted = walk_data.budget_exhausted();
+        if elapsed_ms >= SLOW_SCAN_PATH_MS {
+            warn!(
+                path = %path.display(),
+                elapsed_ms,
+                entries,
+                budget = INCREMENTAL_NODE_BUDGET,
+                exhausted,
+                "单条路径增量扫描较慢"
+            );
+        }
+        walked.map(|node| {
             let node = self.create_node_slab_update_name_index_and_name_pool(Some(parent), &node);
             // Push the newly created node to the parent's children
             self.file_nodes[parent].add_children(node);
@@ -522,7 +581,6 @@ impl SearchCache {
     // `Self::scan_path_nonrecursive`function returns index of the constructed node.
     // - If path is not under the watch root, None is returned.
     // - Procedure contains metadata fetching, if metadata fetching failed, None is returned.
-    #[allow(dead_code)]
     fn scan_path_nonrecursive(&mut self, path: &Path) -> Option<SlabIndex> {
         // Ensure path is under the watch root
         if path.symlink_metadata().err().map(|e| e.kind()) == Some(ErrorKind::NotFound) {
@@ -743,12 +801,64 @@ impl SearchCache {
             self.rescan_count = self.rescan_count.saturating_add(1);
             return Err(HandleFSEError::Rescan);
         }
-        for scan_path in scan_paths(events) {
-            info!("Scanning path: {scan_path:?}");
-            let folder = self.scan_path_recursive(&scan_path);
+        // 单批事件可能覆盖海量路径（全盘 watch 下启动回放尤其明显）。
+        // 每条 `scan_path_recursive` 都会递归整棵子树并逐个 stat，
+        // 不设上限就会让单线程事件循环长时间无法回到 `select!`，
+        // 搜索请求因此被饿死（实测 8s 采样 100% 卡在这里）。
+        // 超出的路径本轮直接丢弃：它们要么在下一批事件里再次出现，
+        // 要么由下次全量/手动 rescan 收敛，好过拖死整个应用。
+        let started = Instant::now();
+        // 先记下精确的文件级事件：`scan_paths` 会把它们合并进祖先目录，
+        // 之后就只能递归整棵目录树了。有了这份清单才能做下方 P1 的精化。
+        let precise_paths: Vec<PathBuf> = events
+            .iter()
+            .filter(|event| matches!(event.flag.scan_type(), ScanType::SingleNode))
+            .map(|event| event.path.clone())
+            .collect();
+        let paths = scan_paths(events);
+        let mut paths = refine_scan_paths(paths, &precise_paths);
+        let total_paths = paths.recursive.len();
+        if total_paths > MAX_SCAN_PATHS_PER_BATCH {
+            paths.recursive.truncate(MAX_SCAN_PATHS_PER_BATCH);
+            warn!(
+                total_paths,
+                limit = MAX_SCAN_PATHS_PER_BATCH,
+                "单批事件路径数超过预算，本轮只处理前 {} 条",
+                MAX_SCAN_PATHS_PER_BATCH
+            );
+        }
+        let nodes_before = self.file_nodes.len();
+        // 浅层：只刷新目录节点自身的元数据（mtime 等），不碰子树。
+        let mut recursive_count = 0usize;
+        for scan_path in &paths.shallow {
+            self.scan_path_nonrecursive(scan_path);
+        }
+        // 深层：真正的递归扫描，只保留必须的路径。
+        for scan_path in &paths.recursive {
+            debug!("Scanning path: {scan_path:?}");
+            recursive_count += 1;
+            let folder = self.scan_path_recursive(scan_path);
             if folder.is_some() {
-                info!("Node changed: {folder:?}");
+                debug!("Node changed: {folder:?}");
             }
+        }
+        if total_paths > 0 {
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let nodes_after = self.file_nodes.len();
+            // 一次日志就能看出这批事件贵不贵、索引涨了还是跌了，
+            // 排查「后台 CPU 高」时不用再翻逐条 debug。
+            info!(
+                total_paths,
+                scanned = total_paths.min(MAX_SCAN_PATHS_PER_BATCH),
+                shallow = paths.shallow.len(),
+                recursive = recursive_count,
+                precise_events = precise_paths.len(),
+                elapsed_ms,
+                nodes_delta = nodes_after as i64 - nodes_before as i64,
+                nodes_total = nodes_after,
+                budget = INCREMENTAL_NODE_BUDGET,
+                "事件批次扫描完成"
+            );
         }
         if let Some(max_event_id) = max_event_id {
             self.update_last_event_id(max_event_id);
@@ -756,6 +866,23 @@ impl SearchCache {
         Ok(())
     }
 }
+
+/// 单批 FSEvents 最多触发的重扫路径数。
+///
+/// 全盘 watch 下启动回放可能一次带来数十万条事件；每条路径都要递归扫描子树，
+/// 单线程事件循环会被彻底占满，搜索请求随之被饿死。限制上限后，
+/// 搜索最多等一轮扫描，剩余路径由后续事件或全量 rescan 收敛。
+const MAX_SCAN_PATHS_PER_BATCH: usize = 64;
+
+/// 单条路径增量扫描最多处理的条目数。
+///
+/// 大目录递归（`node_modules`、构建产物）一次就能产生几十万次 stat；
+/// 超预算时提前收敛，剩余节点由后续事件或全量 rescan 补齐，
+/// 好过让单线程事件循环被一条路径卡住。
+const INCREMENTAL_NODE_BUDGET: usize = 4096;
+
+/// 单条路径扫描超过该耗时即记 warn，便于事后定位「哪一条路径慢」。
+const SLOW_SCAN_PATH_MS: u64 = 100;
 
 /// Compute the minimal set of paths that must be rescanned for a batch of FsEvents.
 ///
@@ -827,6 +954,50 @@ fn scan_paths(events: Vec<FsEvent>) -> Vec<PathBuf> {
         selected.push(path);
     }
     selected
+}
+
+/// 把「最小覆盖路径集」拆成浅层刷新与递归扫描两组。
+///
+/// 背景：`scan_paths` 优先保留祖先，一个目录事件会吞掉它的所有子文件事件；
+/// 随后 `scan_path_recursive` 要删掉整棵子树再递归重建。当目录很大
+/// （`node_modules`、构建产物）而实际只变了几十个文件时，这是纯浪费。
+///
+/// 策略：某个待扫目录下若存在 `MAX_PRECISE_CHILDREN_PER_FOLDER` 条以内的精确
+/// 文件事件，就只浅刷该目录自身，改由这些精确路径各自单节点扫描。
+/// 子事件过多（真的大批量变化）时仍走整目录递归——那种情况下 `read_dir`
+/// 批量拿名字比逐条路径查树更划算。
+fn refine_scan_paths(coalesced: Vec<PathBuf>, precise_paths: &[PathBuf]) -> RefinedScanPaths {
+    if precise_paths.is_empty() {
+        return RefinedScanPaths {
+            shallow: Vec::new(),
+            recursive: coalesced,
+        };
+    }
+    let mut shallow = Vec::new();
+    let mut recursive = Vec::with_capacity(coalesced.len());
+    for path in coalesced {
+        let children: Vec<PathBuf> = precise_paths
+            .iter()
+            .filter(|child| child.as_path() != path.as_path() && child.starts_with(&path))
+            .cloned()
+            .collect();
+        if children.is_empty() || children.len() > MAX_PRECISE_CHILDREN_PER_FOLDER {
+            recursive.push(path);
+            continue;
+        }
+        shallow.push(path);
+        recursive.extend(children);
+    }
+    RefinedScanPaths { shallow, recursive }
+}
+
+/// 一个目录允许用精确子路径替代整树递归的子事件上限。
+const MAX_PRECISE_CHILDREN_PER_FOLDER: usize = 64;
+
+/// 精化后的扫描计划：先浅刷目录，再逐个递归真正需要深扫的路径。
+pub(crate) struct RefinedScanPaths {
+    shallow: Vec<PathBuf>,
+    recursive: Vec<PathBuf>,
 }
 
 fn path_depth(path: &Path) -> usize {
@@ -2972,6 +3143,55 @@ mod tests {
         assert!(infolder_results[0].path.ends_with("nested/child.txt"));
     }
 
+    // 不带 `/` 开头的相对路径（如 `dist/xxx`）会先按「相对监控根」展开成绝对路径。
+    // 当文件比监控根深一层时（`root/cardinal/dist/x` 而输入是 `dist/x`），展开后路径
+    // 前缀对不上，必须回退到「路径后缀匹配」才能命中，否则用户看到的是一条空白结果。
+    #[test]
+    fn test_relative_path_falls_back_to_suffix_match() {
+        let temp_dir = TempDir::new("relpath_fallback").unwrap();
+        let root = temp_dir.path();
+        fs::create_dir_all(root.join("cardinal/dist")).unwrap();
+        fs::File::create(root.join("cardinal/dist/Cardinal_0.1.23_aarch64.dmg")).unwrap();
+        fs::File::create(root.join("cardinal/other.txt")).unwrap();
+
+        let mut cache = SearchCache::walk_fs(root);
+
+        // 精确相对路径：展开后正好等于真实路径，必须命中
+        let exact = query(&mut cache, "cardinal/dist/Cardinal_0.1.23_aarch64.dmg");
+        assert_eq!(exact.len(), 1, "精确相对路径应命中");
+
+        // 缺一层目录：展开失败，回退后缀匹配后应命中
+        let suffix = query(&mut cache, "dist/Cardinal_0.1.23_aarch64.dmg");
+        assert_eq!(suffix.len(), 1, "相对路径缺层时应回退到后缀匹配");
+        assert!(
+            suffix[0]
+                .path
+                .ends_with("cardinal/dist/Cardinal_0.1.23_aarch64.dmg")
+        );
+
+        // 带 `/` 前缀的写法本来就走后缀语义，行为不能变
+        let leading_slash = query(&mut cache, "/dist/Cardinal_0.1.23_aarch64.dmg");
+        assert_eq!(leading_slash.len(), 1);
+
+        // 纯文件名不受影响
+        let bare = query(&mut cache, "Cardinal_0.1.23_aarch64.dmg");
+        assert_eq!(bare.len(), 1);
+    }
+
+    #[test]
+    fn test_suffix_fallback_does_not_mask_non_matches() {
+        let temp_dir = TempDir::new("relpath_fallback_neg").unwrap();
+        let root = temp_dir.path();
+        fs::create_dir_all(root.join("cardinal/dist")).unwrap();
+        fs::File::create(root.join("cardinal/dist/present.txt")).unwrap();
+
+        let mut cache = SearchCache::walk_fs(root);
+
+        // 路径确实不存在时仍然是 0，回退不能凭空造出结果
+        assert_eq!(query(&mut cache, "dist/absent.txt").len(), 0);
+        assert_eq!(query(&mut cache, "nosuchdir/present.txt").len(), 0);
+    }
+
     #[test]
     fn test_query_files_metadata_consistency_after_walk_and_event() {
         let temp_dir = TempDir::new("test_query_meta_consistency").unwrap();
@@ -3046,6 +3266,47 @@ mod tests {
             .as_ref()
             .expect("File in event-added dir metadata should be Some");
         assert_eq!(inner_file_meta.size(), 4);
+    }
+
+    // --- refine_scan_paths focused tests ---
+    #[test]
+    fn test_refine_without_precise_events_keeps_recursive() {
+        let dir = PathBuf::from("/tmp/root/node_modules");
+        let refined = refine_scan_paths(vec![dir.clone()], &[]);
+        assert!(refined.shallow.is_empty());
+        assert_eq!(refined.recursive, vec![dir]);
+    }
+
+    #[test]
+    fn test_refine_few_precise_children_replaces_recursive() {
+        // 目录下只变几个文件：浅刷目录 + 精确路径，避免递归整棵树。
+        let dir = PathBuf::from("/tmp/root/big");
+        let children: Vec<PathBuf> = vec![dir.join("a.js"), dir.join("b.js"), dir.join("c.js")];
+        let refined = refine_scan_paths(vec![dir.clone()], &children);
+        assert_eq!(refined.shallow, vec![dir]);
+        assert_eq!(refined.recursive, children);
+    }
+
+    #[test]
+    fn test_refine_too_many_precise_children_falls_back_to_recursive() {
+        // 子事件超过上限时，整目录递归比逐条路径更划算。
+        let dir = PathBuf::from("/tmp/root/huge");
+        let children: Vec<PathBuf> = (0..=MAX_PRECISE_CHILDREN_PER_FOLDER)
+            .map(|index| dir.join(format!("file-{index}.js")))
+            .collect();
+        let refined = refine_scan_paths(vec![dir.clone()], &children);
+        assert!(refined.shallow.is_empty());
+        assert_eq!(refined.recursive, vec![dir]);
+    }
+
+    #[test]
+    fn test_refine_ignores_unrelated_precise_paths() {
+        // 兄弟目录的精确事件不能算作本目录的子事件。
+        let dir = PathBuf::from("/tmp/root/a");
+        let sibling = PathBuf::from("/tmp/root/b/file.js");
+        let refined = refine_scan_paths(vec![dir.clone()], &[sibling]);
+        assert!(refined.shallow.is_empty());
+        assert_eq!(refined.recursive, vec![dir]);
     }
 
     // --- scan_paths focused tests ---

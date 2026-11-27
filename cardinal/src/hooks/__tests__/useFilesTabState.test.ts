@@ -38,15 +38,15 @@ describe('useFilesTabState', () => {
 
   const renderFilesTabState = (overrides: Partial<HookProps> = {}) =>
     renderHook((props: HookProps) => useFilesTabState(props), {
-        initialProps: {
-          searchQuery: 'needle',
-          queueSearch,
-          filesInputValue: undefined,
-          onFilesInputChange: undefined,
-          onSubmitFilesQuery: undefined,
-          ...overrides,
-        },
-      });
+      initialProps: {
+        searchQuery: 'needle',
+        queueSearch,
+        filesInputValue: undefined,
+        onFilesInputChange: undefined,
+        onSubmitFilesQuery: undefined,
+        ...overrides,
+      },
+    });
 
   beforeEach(() => {
     vi.clearAllMocks();

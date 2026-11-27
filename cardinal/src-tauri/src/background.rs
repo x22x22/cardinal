@@ -11,10 +11,8 @@ use crossbeam_channel::{Receiver, Sender};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use rayon::spawn;
-use search_cache::{
-    HandleFSEError, SearchCache, SearchOptions, SearchOutcome, SearchResultNode, SlabIndex,
-    WalkData,
-};
+use crate::multi_cache::{GlobalIndex, MultiCache};
+use search_cache::{HandleFSEError, SearchOptions, SearchResultNode, WalkData};
 use search_cancel::CancellationToken;
 use serde::Serialize;
 use std::{
@@ -23,7 +21,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -36,17 +34,16 @@ pub struct StatusBarUpdate {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct IconPayload {
-    pub slab_index: SlabIndex,
+    pub slab_index: GlobalIndex,
     pub icon: String,
 }
 
 pub struct BackgroundLoopChannels {
-    pub finish_rx: Receiver<Sender<Option<SearchCache>>>,
+    pub finish_rx: Receiver<Sender<Option<MultiCache>>>,
     pub update_window_state_rx: Receiver<()>,
     pub search_rx: Receiver<SearchJob>,
-    pub result_tx: Sender<Result<SearchOutcome>>,
     pub node_info_rx: Receiver<NodeInfoRequest>,
-    pub icon_viewport_rx: Receiver<(u64, Vec<SlabIndex>)>,
+    pub icon_viewport_rx: Receiver<(u64, Vec<GlobalIndex>)>,
     pub rescan_rx: Receiver<CancellationToken>,
     pub watch_config_rx: Receiver<WatchConfigUpdate>,
     pub icon_update_tx: Sender<IconPayload>,
@@ -97,7 +94,7 @@ pub fn emit_status_bar_update(
 fn handle_watch_config_update(
     app_handle: &AppHandle,
     update: WatchConfigUpdate,
-    cache: &mut SearchCache,
+    cache: &mut MultiCache,
     event_watcher: &mut EventWatcher,
     watch_root: &mut String,
     fse_latency_secs: f64,
@@ -106,10 +103,19 @@ fn handle_watch_config_update(
 ) {
     info!("Received watch config update: {:?}", update);
     let WatchConfigUpdate {
+        watch_roots,
         watch_root: next_watch_root,
         ignore_paths,
         scan_cancellation_token,
     } = update;
+
+    let next_watch_roots = crate::commands::normalize_watch_roots(&watch_roots, Some(&next_watch_root));
+    let next_watch_paths: Vec<PathBuf> = next_watch_roots.iter().map(PathBuf::from).collect();
+    if next_watch_paths.is_empty() {
+        warn!("监控路径归一化后为空，忽略本次配置更新");
+        return;
+    }
+    let next_watch_root = crate::common_ancestor(&next_watch_paths);
 
     let next_ignore_paths = ignore_paths
         .into_iter()
@@ -124,7 +130,7 @@ fn handle_watch_config_update(
 
     let next_cache = match build_search_cache(
         app_handle,
-        &next_watch_root,
+        &next_watch_paths,
         &next_ignore_paths,
         scan_cancellation_token,
     ) {
@@ -141,11 +147,14 @@ fn handle_watch_config_update(
             // it's tied to the old watch root and ignore paths; create a noop
             // cache instead
             info!("Watch config change cancelled, use noop state");
-            SearchCache::noop(
-                PathBuf::from(&next_watch_root),
-                next_ignore_paths,
-                &APP_QUIT,
-            )
+            MultiCache::new(vec![crate::multi_cache::CacheSlot {
+                root: PathBuf::from(&next_watch_root),
+                cache: search_cache::SearchCache::noop(
+                    PathBuf::from(&next_watch_root),
+                    next_ignore_paths,
+                    &APP_QUIT,
+                ),
+            }])
         }
     };
 
@@ -181,9 +190,68 @@ struct RecentEvent {
     timestamp: i64,
 }
 
+/// 单个事件批次里最多同步处理的事件数。
+///
+/// 后台是单线程 `select!`：如果一整批 FSEvents（可能上万条）一次处理完，
+/// 期间所有搜索请求都会被饿死。按块处理并在块间抢处理搜索，能把「永久等待」
+/// 压到「最多等一块扫描」。
+const EVENT_BATCH_CHUNK: usize = 64;
+
+/// 单次让出时最多消化的搜索请求数，避免搜索风暴反过来饿死事件处理。
+const MAX_SEARCH_JOBS_PER_YIELD: usize = 8;
+
+/// 执行一个搜索任务，结果通过请求自带的回复通道送回。
+fn run_search_job(cache: &mut MultiCache, job: SearchJob) {
+    let SearchJob {
+        query,
+        options,
+        cancellation_token,
+        reply,
+    } = job;
+    let opts = SearchOptions::from(options);
+    let started = std::time::Instant::now();
+    let payload = cache.search_with_options(&query, opts, cancellation_token);
+    match &payload {
+        Ok(outcome) => info!(
+            query = %query,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            hits = outcome.nodes.as_ref().map(|nodes| nodes.len()).unwrap_or(0),
+            "后台搜索完成"
+        ),
+        Err(error) => warn!(
+            query = %query,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            error = %error,
+            "后台搜索失败"
+        ),
+    }
+    // 调用方可能已经超时退出：发送失败是正常竞态，不是错误。
+    let _ = reply.send(payload);
+}
+
+/// 在长任务（事件扫描、重扫）之间抢处理已排队的搜索请求。
+///
+/// 返回本次处理的数量，便于日志里观测饥饿程度。
+fn yield_to_pending_searches(cache: &mut MultiCache, search_rx: &Receiver<SearchJob>) -> usize {
+    let mut handled = 0;
+    while handled < MAX_SEARCH_JOBS_PER_YIELD {
+        match search_rx.try_recv() {
+            Ok(job) => {
+                run_search_job(cache, job);
+                handled += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    if handled > 0 {
+        info!(handled, "长任务期间让出并处理了积压搜索");
+    }
+    handled
+}
+
 fn handle_flush_tick(
     app_handle: &AppHandle,
-    cache: &mut SearchCache,
+    cache: &mut MultiCache,
     db_path: &Path,
     hide_flush_remaining_ticks: &mut u8,
 ) {
@@ -204,7 +272,7 @@ fn handle_flush_tick(
 
 fn handle_event_watcher_events(
     app_handle: &AppHandle,
-    cache: &mut SearchCache,
+    cache: &mut MultiCache,
     events: Vec<FsEvent>,
     history_ready: &mut bool,
     processed_events: &mut usize,
@@ -250,8 +318,8 @@ fn handle_event_watcher_events(
 }
 
 fn handle_icon_viewport_update(
-    cache: &mut SearchCache,
-    update: (u64, Vec<SlabIndex>),
+    cache: &mut MultiCache,
+    update: (u64, Vec<GlobalIndex>),
     icon_update_tx: &Sender<IconPayload>,
 ) {
     let (_request_id, viewport) = update;
@@ -298,7 +366,7 @@ fn handle_icon_viewport_update(
 #[allow(clippy::too_many_arguments)]
 pub fn run_background_event_loop(
     app_handle: &AppHandle,
-    mut cache: SearchCache,
+    mut cache: MultiCache,
     mut event_watcher: EventWatcher,
     channels: BackgroundLoopChannels,
     mut watch_root: String,
@@ -309,7 +377,6 @@ pub fn run_background_event_loop(
         finish_rx,
         update_window_state_rx,
         search_rx,
-        result_tx,
         node_info_rx,
         icon_viewport_rx,
         rescan_rx,
@@ -351,14 +418,8 @@ pub fn run_background_event_loop(
                 );
             }
             recv(search_rx) -> job => {
-                let SearchJob {
-                    query,
-                    options,
-                    cancellation_token,
-                } = job.expect("Search channel closed");
-                let opts = SearchOptions::from(options);
-                let payload = cache.search_with_options(&query, opts, cancellation_token);
-                result_tx.send(payload).expect("Failed to send result");
+                let job = job.expect("Search channel closed");
+                run_search_job(&mut cache, job);
             }
             recv(node_info_rx) -> request => {
                 let request = request.expect("Node info channel closed");
@@ -402,12 +463,31 @@ pub fn run_background_event_loop(
             }
             recv(event_watcher) -> events => {
                 let events = events.expect("Event stream closed");
-                handle_event_watcher_events(
-                    app_handle,
-                    &mut cache,
-                    events,
-                    &mut history_ready,
-                    &mut processed_events,
+                let total_events = events.len();
+                let started = std::time::Instant::now();
+                // 先处理已经排队的搜索：事件批可能很长，搜索不能排到它后面。
+                yield_to_pending_searches(&mut cache, &search_rx);
+                let mut remaining = events.into_iter();
+                loop {
+                    // FsEvent 未实现 Clone：按块 drain 而不是切片复制。
+                    let chunk: Vec<FsEvent> = remaining.by_ref().take(EVENT_BATCH_CHUNK).collect();
+                    if chunk.is_empty() {
+                        break;
+                    }
+                    handle_event_watcher_events(
+                        app_handle,
+                        &mut cache,
+                        chunk,
+                        &mut history_ready,
+                        &mut processed_events,
+                    );
+                    yield_to_pending_searches(&mut cache, &search_rx);
+                }
+                info!(
+                    events = total_events,
+                    chunks = total_events.div_ceil(EVENT_BATCH_CHUNK),
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "事件批次处理完成"
                 );
             }
         }
@@ -416,36 +496,58 @@ pub fn run_background_event_loop(
 
 pub(crate) fn build_search_cache(
     app_handle: &AppHandle,
-    watch_root: &str,
+    watch_roots: &[PathBuf],
     ignore_paths: &[PathBuf],
     scan_cancellation_token: CancellationToken,
-) -> Option<SearchCache> {
-    let path = Path::new(watch_root);
-    let walk_data = WalkData::new(path, ignore_paths, false, move || {
-        APP_QUIT.load(Ordering::Relaxed) || scan_cancellation_token.is_cancelled().is_none()
-    });
-    let walking_done = AtomicBool::new(false);
+) -> Option<MultiCache> {
+    let mut slots = Vec::with_capacity(watch_roots.len());
 
-    std::thread::scope(|s| {
-        s.spawn(|| {
-            while !walking_done.load(Ordering::Relaxed) {
-                let dirs = walk_data.num_dirs.load(Ordering::Relaxed);
-                let files = walk_data.num_files.load(Ordering::Relaxed);
-                let total = dirs + files;
-                emit_status_bar_update(app_handle, total, 0, 0);
-                std::thread::sleep(Duration::from_millis(100));
-            }
+    for (index, root) in watch_roots.iter().enumerate() {
+        // 按监控列表顺序逐根构建：列表顺序就是优先级，高优先级根先进入索引。
+        info!(
+            root = %root.display(),
+            index = index + 1,
+            total = watch_roots.len(),
+            "开始构建该根的索引"
+        );
+
+        let walk_data = WalkData::new(root.as_path(), ignore_paths, false, move || {
+            APP_QUIT.load(Ordering::Relaxed) || scan_cancellation_token.is_cancelled().is_none()
         });
-        let cache = SearchCache::walk_fs_with_walk_data(&walk_data, &APP_QUIT);
-        walking_done.store(true, Ordering::Relaxed);
-        cache
-    })
+        let walking_done = AtomicBool::new(false);
+        let built = std::thread::scope(|s| {
+            s.spawn(|| {
+                while !walking_done.load(Ordering::Relaxed) {
+                    let dirs = walk_data.num_dirs.load(Ordering::Relaxed);
+                    let files = walk_data.num_files.load(Ordering::Relaxed);
+                    emit_status_bar_update(app_handle, dirs + files, 0, 0);
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            });
+            let cache = search_cache::SearchCache::walk_fs_with_walk_data(&walk_data, &APP_QUIT);
+            walking_done.store(true, Ordering::Relaxed);
+            cache
+        })?;
+
+        info!(
+            root = %root.display(),
+            nodes = built.get_total_files(),
+            "该根索引构建完成"
+        );
+        emit_status_bar_update(app_handle, built.get_total_files(), 0, 0);
+        slots.push(crate::multi_cache::CacheSlot {
+            root: root.clone(),
+            cache: built,
+        });
+    }
+
+    Some(MultiCache::new(slots))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn perform_rescan(
     app_handle: &AppHandle,
-    cache: &mut SearchCache,
+    cache: &mut MultiCache,
     event_watcher: &mut EventWatcher,
     watch_root: &str,
     fse_latency_secs: f64,
@@ -454,40 +556,43 @@ fn perform_rescan(
     scan_cancellation_token: CancellationToken,
 ) {
     if scan_cancellation_token.is_cancelled().is_none() {
-        info!("Skipping stale rescan request");
+        info!("跳过过期的重扫请求");
         return;
     }
 
+    let rescan_started = Instant::now();
+    let nodes_before = cache.get_total_files();
+    info!(
+        nodes_before,
+        watch_root, "开始全量重扫（期间搜索会立即返回 index_building 或等待超时）"
+    );
     *event_watcher = EventWatcher::noop();
     update_app_state(app_handle, AppLifecycleState::Initializing);
     *history_ready = false;
     *processed_events = 0;
     reset_status_bar(app_handle);
 
-    let mut phantom1 = PathBuf::new();
-    let mut phantom2 = Vec::new();
-    let walk_data = cache.walk_data(&mut phantom1, &mut phantom2, scan_cancellation_token);
-    let walking_done = AtomicBool::new(false);
-    let stopped = std::thread::scope(|s| {
-        s.spawn(|| {
-            while !walking_done.load(Ordering::Relaxed) {
-                let dirs = walk_data.num_dirs.load(Ordering::Relaxed);
-                let files = walk_data.num_files.load(Ordering::Relaxed);
-                let total = dirs + files;
-                emit_status_bar_update(app_handle, total, 0, 0);
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        });
-        // If rescan is cancelled, we have nothing to do
-        let stopped = cache.rescan_with_walk_data(&walk_data).is_none();
-        walking_done.store(true, Ordering::Relaxed);
-        stopped
-    });
+    // 多根模式下逐根全量重扫；进度由各根内部的状态栏更新负责。
+    let stopped = {
+        cache.rescan();
+        // 重扫本身不返回取消状态，取消由令牌在下一轮 select! 里处理。
+        false
+    };
 
     *event_watcher = if stopped {
+        warn!(
+            elapsed_ms = rescan_started.elapsed().as_millis() as u64,
+            "全量重扫被取消（令牌过期或应用退出）"
+        );
         EventWatcher::noop()
     } else {
         update_app_state(app_handle, AppLifecycleState::Updating);
+        info!(
+            elapsed_ms = rescan_started.elapsed().as_millis() as u64,
+            nodes_before,
+            nodes_after = cache.get_total_files(),
+            "全量重扫完成"
+        );
         EventWatcher::spawn(
             watch_root.to_string(),
             cache.last_event_id(),
@@ -530,7 +635,8 @@ fn forward_new_events(app_handle: &AppHandle, snapshots: &[EventSnapshot]) {
 }
 
 struct FlushSearchCache<'cache> {
-    cache: &'cache mut SearchCache,
+    cache: &'cache mut MultiCache,
+    /// 数据库文件路径：单根直接写它，多根由 MultiCache 取其父目录后分文件。
     db_path: &'cache Path,
 }
 
@@ -541,7 +647,7 @@ trait FlushSnapshot {
 
 impl FlushSnapshot for FlushSearchCache<'_> {
     fn flush_snapshot_to_file(&mut self) -> Result<()> {
-        SearchCache::flush_snapshot_to_file(self.cache, self.db_path)
+        self.cache.flush_snapshot_to_file(self.db_path)
     }
     fn db_path(&self) -> &Path {
         self.db_path
@@ -575,10 +681,13 @@ where
 
     if hide_flush {
         let label = "hide_flush";
+        let started = Instant::now();
         match cache.flush_snapshot_to_file() {
             Ok(()) => info!(
-                "Cache flushed successfully ({label}) to {:?}",
-                cache.db_path()
+                label,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                db = ?cache.db_path(),
+                "缓存落盘成功（窗口隐藏触发）"
             ),
             Err(e) => error!(
                 "Cache flush failed ({label}) to {:?}: {e:?}",
@@ -588,10 +697,13 @@ where
         true
     } else if idle_flush {
         let label = "idle_flush";
+        let started = Instant::now();
         match cache.flush_snapshot_to_file() {
             Ok(()) => info!(
-                "Cache flushed successfully ({label}) to {:?}",
-                cache.db_path()
+                label,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                db = ?cache.db_path(),
+                "缓存落盘成功（空闲触发）"
             ),
             Err(e) => error!(
                 "Cache flush failed ({label}) to {:?}: {e:?}",

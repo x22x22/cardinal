@@ -190,4 +190,39 @@ describe('VirtualList frozen viewport', () => {
       expect(container.querySelector('.virtual-list-overlay')).toBeNull();
     });
   });
+
+  it('exposes focus through the imperative handle', async () => {
+    const cache = new Map<SlabIndex, SearchResultItem>([[1 as SlabIndex, buildItem('/item')]]);
+    const ref = React.createRef<React.ElementRef<typeof VirtualList>>();
+
+    mockUseDataLoader.mockImplementation(() => ({
+      cache,
+      ensureRangeLoaded: mockEnsureRangeLoaded,
+    }));
+
+    render(
+      <VirtualList
+        ref={ref}
+        results={[1 as SlabIndex]}
+        dataResultsVersion={1}
+        displayedResultsVersion={1}
+        rowHeight={20}
+        overscan={0}
+        renderRow={(rowIndex, item, style) => (
+          <div key={rowIndex} style={style}>
+            {item?.path}
+          </div>
+        )}
+        onScrollSync={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(ref.current).not.toBeNull();
+    });
+
+    ref.current?.focus();
+
+    expect(document.activeElement).toHaveClass('virtual-list');
+  });
 });

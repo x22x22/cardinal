@@ -1,15 +1,16 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useWatchRoot } from '../useWatchRoot';
+import { useWatchRoots } from '../useWatchRoot';
 
-const STORAGE_KEY = 'cardinal.watchRoot';
+const STORAGE_KEY = 'cardinal.watchRoots';
+const LEGACY_KEY = 'cardinal.watchRoot';
 
 const flushEffects = async () => {
   await act(async () => {});
 };
 
-describe('useWatchRoot', () => {
+describe('useWatchRoots', () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -18,76 +19,47 @@ describe('useWatchRoot', () => {
     vi.restoreAllMocks();
   });
 
-  it('hydrates from stored values and does not persist defaults', async () => {
-    window.localStorage.setItem(STORAGE_KEY, '/Users/example');
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+  it('hydrates a list from stored values', async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(['/a', '/b']));
+    const { result } = renderHook(() => useWatchRoots());
 
-    const { result } = renderHook(() => useWatchRoot());
-
-    expect(result.current.watchRoot).toBe('/Users/example');
-
+    expect(result.current.watchRoots).toEqual(['/a', '/b']);
     await flushEffects();
-
-    expect(setItemSpy).not.toHaveBeenCalled();
   });
 
-  it('uses defaults and persists when no stored value exists', async () => {
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+  it('migrates the legacy single-root key', async () => {
+    window.localStorage.setItem(LEGACY_KEY, '/legacy/root');
+    const { result } = renderHook(() => useWatchRoots());
 
-    const { result } = renderHook(() => useWatchRoot());
-
-    expect(result.current.watchRoot).toBe(result.current.defaultWatchRoot);
-
+    expect(result.current.watchRoots).toEqual(['/legacy/root']);
     await flushEffects();
-
-    expect(setItemSpy).toHaveBeenCalledWith(STORAGE_KEY, result.current.defaultWatchRoot);
   });
 
-  it('trims and persists updates', async () => {
-    window.localStorage.setItem(STORAGE_KEY, '/');
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+  it('falls back to the default when nothing is stored', async () => {
+    const { result } = renderHook(() => useWatchRoots());
 
-    const { result } = renderHook(() => useWatchRoot());
-
+    expect(result.current.watchRoots).toEqual(['/']);
+    expect(result.current.defaultWatchRoots).toEqual(['/']);
     await flushEffects();
+  });
+
+  it('drops blank entries when updating', async () => {
+    const { result } = renderHook(() => useWatchRoots());
 
     act(() => {
-      result.current.setWatchRoot(' /Users/example ');
+      result.current.setWatchRoots(['  /a  ', '', '/b']);
     });
 
-    expect(result.current.watchRoot).toBe('/Users/example');
-    expect(setItemSpy).toHaveBeenCalledWith(STORAGE_KEY, '/Users/example');
+    expect(result.current.watchRoots).toEqual(['/a', '/b']);
   });
 
-  it('falls back to default for empty updates', async () => {
-    window.localStorage.setItem(STORAGE_KEY, '/');
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
-
-    const { result } = renderHook(() => useWatchRoot());
-
-    await flushEffects();
+  it('keeps at least the default root when everything is blank', async () => {
+    const { result } = renderHook(() => useWatchRoots());
 
     act(() => {
-      result.current.setWatchRoot('   ');
+      result.current.setWatchRoots(['', '   ']);
     });
 
-    expect(result.current.watchRoot).toBe(result.current.defaultWatchRoot);
-    expect(setItemSpy).toHaveBeenCalledWith(STORAGE_KEY, result.current.defaultWatchRoot);
-  });
-
-  it('warns when persisting defaults fails', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('boom');
-    });
-
-    const { result } = renderHook(() => useWatchRoot());
-
-    expect(result.current.watchRoot).toBe(result.current.defaultWatchRoot);
-
-    await flushEffects();
-
-    expect(setItemSpy).toHaveBeenCalledWith(STORAGE_KEY, result.current.defaultWatchRoot);
-    expect(warnSpy).toHaveBeenCalled();
+    expect(result.current.watchRoots).toEqual(['/']);
   });
 });

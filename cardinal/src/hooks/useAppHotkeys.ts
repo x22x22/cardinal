@@ -8,6 +8,7 @@ import {
 } from '../runtime/tauriEventRuntime';
 import { openResultPath } from '../utils/openResultPath';
 import { useStableEvent } from './useStableEvent';
+import { isResultOpenShortcutEvent } from '../resultOpenShortcutPreference';
 
 type MoveSelectionOptions = {
   extend?: boolean;
@@ -20,6 +21,7 @@ type UseAppHotkeysOptions = {
   focusSearchInput: () => void;
   navigateSelection: (delta: 1 | -1, options?: MoveSelectionOptions) => void;
   triggerQuickLook: () => void;
+  resultOpenShortcut: string;
 };
 
 const QUICK_LOOK_KEYCODE_DOWN = 125;
@@ -39,6 +41,7 @@ export function useAppHotkeys({
   focusSearchInput,
   navigateSelection,
   triggerQuickLook,
+  resultOpenShortcut,
 }: UseAppHotkeysOptions): void {
   const keyboardStateRef = useRef<{ activeTab: StatusTabKey }>({
     activeTab,
@@ -47,6 +50,12 @@ export function useAppHotkeys({
   useEffect(() => {
     keyboardStateRef.current.activeTab = activeTab;
   }, [activeTab]);
+
+  const openSelectedPaths = useStableEvent(() => {
+    selectedPaths.forEach((path) => {
+      openResultPath(path);
+    });
+  });
 
   const handleMetaShortcut = useStableEvent((event: KeyboardEvent, currentTab: StatusTabKey) => {
     const key = event.key.toLowerCase();
@@ -71,12 +80,6 @@ export function useAppHotkeys({
       selectedPaths.forEach((path) => {
         void invoke('open_in_finder', { path });
       });
-      return true;
-    }
-
-    if (key === 'o' && selectedPaths.length > 0) {
-      event.preventDefault();
-      selectedPaths.forEach((path) => openResultPath(path));
       return true;
     }
 
@@ -114,6 +117,12 @@ export function useAppHotkeys({
       event.preventDefault();
       const delta = event.key === 'ArrowDown' ? 1 : -1;
       navigateSelection(delta, { extend: event.shiftKey });
+      return true;
+    }
+
+    if (selectedPaths.length > 0 && isResultOpenShortcutEvent(resultOpenShortcut, event)) {
+      event.preventDefault();
+      openSelectedPaths();
       return true;
     }
 

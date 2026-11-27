@@ -18,6 +18,7 @@ import type { SlabIndex } from '../types/slab';
 import { useIconViewport } from '../hooks/useIconViewport';
 
 export type VirtualListHandle = {
+  focus: () => void;
   scrollToTop: () => void;
   scrollToRow: (rowIndex: number, align?: 'nearest' | 'start' | 'end' | 'center') => void;
   ensureRangeLoaded: (startIndex: number, endIndex: number) => Promise<void> | void;
@@ -39,6 +40,8 @@ type VirtualListProps = {
     rowStyle: CSSProperties,
   ) => React.ReactNode;
   onScrollSync: (scrollLeft: number) => void;
+  /** 滚动接近底部时触发；父级据此追加下一页。 */
+  onEndReached?: () => void;
 };
 
 // Virtualized list with lazy row hydration plus a short-lived frozen viewport during
@@ -52,6 +55,7 @@ export const VirtualList = forwardRef<VirtualListHandle, VirtualListProps>(funct
     overscan,
     renderRow,
     onScrollSync,
+    onEndReached,
   },
   ref,
 ) {
@@ -122,6 +126,17 @@ export const VirtualList = forwardRef<VirtualListHandle, VirtualListProps>(funct
   );
 
   // ----- effects -----
+  // 视口接近底部时请求下一页。剩余量取 3 行，避免用户真的滚到底才等加载。
+  useEffect(() => {
+    if (!onEndReached || rowCount === 0 || !viewportHeight) {
+      return;
+    }
+    const remaining = maxScrollTop - scrollTop;
+    if (remaining <= rowHeight * 3) {
+      onEndReached();
+    }
+  }, [onEndReached, rowCount, viewportHeight, maxScrollTop, scrollTop, rowHeight]);
+
   // Ensure the data cache stays warm for the active window
   useEffect(() => {
     if (end >= start) ensureRangeLoaded(start, end);
@@ -215,6 +230,7 @@ export const VirtualList = forwardRef<VirtualListHandle, VirtualListProps>(funct
   useImperativeHandle(
     ref,
     () => ({
+      focus: () => containerRef.current?.focus(),
       scrollToTop: () => updateScrollAndRange(() => 0),
       scrollToRow,
       ensureRangeLoaded,
@@ -255,6 +271,7 @@ export const VirtualList = forwardRef<VirtualListHandle, VirtualListProps>(funct
       ref={containerRef}
       className="virtual-list"
       onWheel={handleWheel}
+      tabIndex={0}
       role="list"
       aria-rowcount={rowCount}
     >

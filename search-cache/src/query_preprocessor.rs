@@ -4,6 +4,98 @@ use cardinal_syntax::{
 };
 use std::{env, path::Path};
 
+/// 中文过滤器关键字别名表：`中文关键字 -> 英文标准关键字`。
+///
+/// `cardinal_syntax` 的解析器只把 `[A-Za-z0-9_-]` 组成的关键字识别成过滤器
+/// （见 `cardinal_syntax::is_valid_filter_name`），因此 `文件夹:foo` 这类中文输入
+/// 会整体退化成普通词项，永远匹配不到文件名。这里在词法解析之后、查询优化之前，
+/// 把中文关键字重写成语义等价的英文过滤器，使中文输入与英文输入行为完全一致。
+///
+/// 右侧必须是 `cardinal_syntax::FilterKind::from_name` 认识的关键字，
+/// 否则会退化成 `FilterKind::Custom` 并在求值时报错。
+const CHINESE_FILTER_ALIASES: &[(&str, &str)] = &[
+    // 文件夹（folder 类型过滤，参数可选）
+    ("文件夹", "folder"),
+    ("文件夹名", "folder"),
+    ("文件夹类型", "folder"),
+    // 目录 == dir（Everything 里 dir 与 parent 同级：仅直接子项）
+    ("目录", "dir"),
+    // 文件
+    ("文件", "file"),
+    ("文件名", "file"),
+    // 类型 / 扩展名
+    ("类型", "type"),
+    ("后缀", "ext"),
+    ("扩展名", "ext"),
+    // 路径（英文 path 的现有语义即 infolder：递归包含）
+    ("路径", "path"),
+    ("在", "path"),
+    // 正则（整体切换为正则模式，不走过滤器）
+    ("正则", "regex"),
+    // 大小 / 日期（英文没有单独的 date 关键字，日期默认对齐修改日期 dm）
+    ("大小", "size"),
+    ("日期", "dm"),
+    ("修改日期", "dm"),
+    ("创建日期", "dc"),
+];
+
+/// 查中文关键字对应的英文标准关键字。
+fn chinese_filter_alias(name: &str) -> Option<&'static str> {
+    CHINESE_FILTER_ALIASES
+        .iter()
+        .find_map(|(chinese, english)| (*chinese == name).then_some(*english))
+}
+
+/// 把形如 `文件夹:cardinal`、`文件夹:` 的中文词项重新解释成标准词项。
+///
+/// 通过 `cardinal_syntax::parse_query` 重新解析重写后的文本，从而复用官方解析器对
+/// `ArgumentKind`（`Bare` / `Phrase` / `List` / `Range` / `Comparison`）的分类，
+/// 保证 `扩展名:jpg;png`、`大小:>1GB`、`正则:^foo` 等与英文写法逐字段等价。
+fn aliased_term(word: &str) -> Option<Term> {
+    let (name, rest) = word.split_once(':')?;
+    let english = chinese_filter_alias(name)?;
+    let mut rebuilt = String::with_capacity(english.len() + 1 + rest.len());
+    rebuilt.push_str(english);
+    rebuilt.push(':');
+    rebuilt.push_str(rest);
+    match cardinal_syntax::parse_query(&rebuilt) {
+        Ok(Query {
+            expr: Expr::Term(term),
+        }) => Some(term),
+        _ => None,
+    }
+}
+
+fn normalize_filter_aliases_expr(expr: Expr) -> Expr {
+    match expr {
+        Expr::Empty => Expr::Empty,
+        Expr::Term(Term::Word(word)) => match aliased_term(&word) {
+            Some(term) => Expr::Term(term),
+            None => Expr::Term(Term::Word(word)),
+        },
+        Expr::Term(term) => Expr::Term(term),
+        Expr::Not(inner) => Expr::Not(Box::new(normalize_filter_aliases_expr(*inner))),
+        Expr::And(parts) => Expr::And(
+            parts
+                .into_iter()
+                .map(normalize_filter_aliases_expr)
+                .collect(),
+        ),
+        Expr::Or(parts) => Expr::Or(
+            parts
+                .into_iter()
+                .map(normalize_filter_aliases_expr)
+                .collect(),
+        ),
+    }
+}
+
+/// 把表达式树里的中文过滤器关键字重写为英文标准关键字（幂等）。
+fn normalize_filter_aliases(mut query: Query) -> Query {
+    query.expr = normalize_filter_aliases_expr(query.expr);
+    query
+}
+
 #[cfg(test)]
 pub(crate) fn expand_query_home_dirs(query: Query) -> Query {
     let Some(home) = home_dir() else { return query };
@@ -16,7 +108,8 @@ fn expand_query_home_dirs_with_home(query: Query, home: &str) -> Query {
 }
 
 pub(crate) fn resolve_query_paths(query: Query, root: &Path) -> Query {
-    let mut query = query;
+    // 即使没有 home 目录可用，也必须在路径解析前完成中文别名重写。
+    let mut query = normalize_filter_aliases(query);
     if let Some(home) = home_dir() {
         query = expand_query_home_dirs_with_home_and_root(query, &home, None);
     }
@@ -29,6 +122,9 @@ fn expand_query_home_dirs_with_home_and_root(
     home: &str,
     root: Option<&Path>,
 ) -> Query {
+    // 中文过滤器关键字必须先重写，之后的 `~` 展开与相对路径解析才会作用在
+    // 正确的过滤器参数上（例如 `路径:~/src` -> `infolder:~/src` -> `/Users/.../src`）。
+    query = normalize_filter_aliases(query);
     if !home.is_empty() {
         query.expr = expand_expr(query.expr, home);
     }
@@ -488,7 +584,8 @@ mod tests {
     #[test]
     fn leaves_tilde_paths_untouched_without_home_dir() {
         let parsed = parse_query("~/logs").expect("valid query");
-        let resolved = expand_query_home_dirs_with_home_and_root(parsed, "", Some(Path::new("/tmp/root")));
+        let resolved =
+            expand_query_home_dirs_with_home_and_root(parsed, "", Some(Path::new("/tmp/root")));
         match resolved.expr {
             Expr::Term(Term::Word(word)) => assert_eq!(word, "~/logs"),
             other => panic!("Unexpected expr: {other:?}"),
@@ -1368,5 +1465,137 @@ mod tests {
             }
             other => panic!("Unexpected expr: {other:?}"),
         }
+    }
+
+    // ---- 中文过滤器关键字别名 ----
+
+    fn normalize(input: &str) -> Query {
+        normalize_filter_aliases(parse_query(input).expect("valid query"))
+    }
+
+    fn filter_of(expr: &Expr) -> &Filter {
+        match expr {
+            Expr::Term(Term::Filter(filter)) => filter,
+            other => panic!("Expected filter expr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chinese_folder_keyword_matches_english_folder_filter() {
+        // `文件夹: foo` 必须与 `folder: foo` 完全等价：folder 类型过滤 + 独立词项。
+        let chinese = normalize("文件夹: foo");
+        let english = normalize("folder: foo");
+        assert_eq!(chinese.expr, english.expr);
+
+        let Expr::And(parts) = &chinese.expr else {
+            panic!("Expected And expr, got {:?}", chinese.expr);
+        };
+        assert_eq!(parts.len(), 2);
+        let filter = filter_of(&parts[0]);
+        assert_eq!(filter.kind, FilterKind::Folder);
+        assert!(filter.argument.is_none());
+        assert!(matches!(&parts[1], Expr::Term(Term::Word(word)) if word == "foo"));
+    }
+
+    #[test]
+    fn chinese_folder_keyword_with_inline_argument_matches_english() {
+        // `文件夹:cardinal` 与 `folder:cardinal` 等价（参数直接跟在冒号后）。
+        let chinese = normalize("文件夹:cardinal");
+        let english = normalize("folder:cardinal");
+        assert_eq!(chinese.expr, english.expr);
+        let filter = filter_of(&chinese.expr);
+        assert_eq!(filter.kind, FilterKind::Folder);
+        assert_eq!(
+            filter.argument.as_ref().map(|arg| arg.raw.as_str()),
+            Some("cardinal")
+        );
+
+        // 无参数的 `文件夹:` 等价于 `folder:`。
+        assert_eq!(normalize("文件夹:").expr, normalize("folder:").expr);
+    }
+
+    #[test]
+    fn chinese_alias_table_covers_required_keywords() {
+        // 关键字 -> 等价英文过滤器
+        let cases = [
+            ("文件夹名:docs", "folder:docs"),
+            ("目录:docs", "dir:docs"),
+            ("文件:report", "file:report"),
+            ("类型:图片", "type:图片"),
+            ("后缀:rs", "ext:rs"),
+            ("扩展名:jpg;png", "ext:jpg;png"),
+            ("路径:src", "path:src"),
+            ("在:src", "path:src"),
+            ("大小:1mb..10mb", "size:1mb..10mb"),
+            ("日期:today", "dm:today"),
+        ];
+        for (chinese, english) in cases {
+            assert_eq!(
+                normalize(chinese).expr,
+                normalize(english).expr,
+                "中文关键字 {chinese:?} 应等价于 {english:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn chinese_regex_keyword_switches_to_regex_term() {
+        // `正则:` 与英文 `regex:` 一样，整条查询进入正则模式（Term::Regex）。
+        let chinese = normalize("正则:^cardinal");
+        let english = normalize("regex:^cardinal");
+        assert_eq!(chinese.expr, english.expr);
+        assert!(matches!(
+            chinese.expr,
+            Expr::Term(Term::Regex(ref pattern)) if pattern == "^cardinal"
+        ));
+    }
+
+    #[test]
+    fn chinese_path_keyword_is_resolved_against_root() {
+        // 别名重写必须发生在相对路径解析之前，`路径:src` 才会被解析成 root/src。
+        let chinese = resolve_with_home("路径:src", "", "/root");
+        let english = resolve_with_home("path:src", "", "/root");
+        assert_eq!(chinese.expr, english.expr);
+        let filter = filter_of(&chinese.expr);
+        assert_eq!(filter.kind, FilterKind::InFolder);
+        assert_eq!(
+            filter.argument.as_ref().map(|arg| arg.raw.as_str()),
+            Some("/root/src")
+        );
+    }
+
+    #[test]
+    fn english_queries_are_untouched_by_normalization() {
+        // 英文关键字与普通词项不参与重写。
+        for query in [
+            "folder: foo",
+            "folder:docs",
+            "ext:rs",
+            "cardinal",
+            "路径",
+            "文件夹",
+            "report ext:rs folder: docs",
+            "notafilter:value",
+        ] {
+            let parsed = parse_query(query).expect("valid query");
+            let before = parsed.expr.clone();
+            let after = normalize_filter_aliases(parsed).expr;
+            assert_eq!(before, after, "查询 {query:?} 不应被改动");
+        }
+        // 单独的 `文件夹`（没有冒号）仍然只是普通词项。
+        assert!(matches!(
+            normalize("文件夹").expr,
+            Expr::Term(Term::Word(ref word)) if word == "文件夹"
+        ));
+    }
+
+    #[test]
+    fn chinese_alias_only_matches_known_keyword_before_colon() {
+        // 未知的中文前缀不应被重写成过滤器（避免误伤普通词项）。
+        let query = normalize("未知关键字:value");
+        assert!(matches!(
+            query.expr,
+            Expr::Term(Term::Word(ref word)) if word == "未知关键字:value"
+        ));
     }
 }

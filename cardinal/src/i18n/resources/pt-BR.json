@@ -128,6 +128,14 @@
     "launchMinimizedToTray": {
       "label": "Minimizar para a bandeja ao iniciar"
     },
+    "resultOpenShortcut": {
+      "label": "Open result shortcut",
+      "help": "Click the field and press the key used to open selected search results, such as Command+O or Enter.",
+      "recordingHelp": "Recording... press a shortcut such as Command+O or Enter, or press Escape to cancel.",
+      "errors": {
+        "invalidFormat": "Use a valid shortcut such as Command+O or Enter."
+      }
+    },
     "sortingLimit": {
       "label": "Limite de ordenação"
     },
