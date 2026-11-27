@@ -275,12 +275,38 @@ fn resolve_term_paths(term: Term, root: &Path) -> Term {
     }
 }
 
-fn resolve_word_path(word: String, root: &Path) -> String {
-    if should_resolve_relative_path(&word) {
-        root.join(word).to_string_lossy().into_owned()
-    } else {
-        word
+fn resolve_word_path(word: String, _root: &Path) -> String {
+    // 词项里的路径一律**不**和监控根拼接：拼接会把首段固定成监控根自己的目录名，
+    // 后续段也退化成 Exact，于是 `foo/bar` 匹配不到 `dirfoo/bar`、
+    // `anchor/x*/y` 匹配不到 `work-anchor/x-release/y`。
+    // 交给分词器按路径段处理（首段后缀、末段前缀），才符合「路径片段搜索」的直觉。
+    // 需要锚定到某个目录时用 `infolder:` / `parent:` 这类过滤器。
+    word
+}
+
+#[allow(dead_code)]
+fn should_resolve_relative_path(value: &str) -> bool {
+    let trimmed = strip_wrapping_quotes(value);
+    if trimmed.is_empty() {
+        return false;
     }
+    if trimmed.starts_with('/') || trimmed.starts_with('~') || trimmed.starts_with("\\\\") {
+        return false;
+    }
+    if is_windows_absolute_path(trimmed) {
+        return false;
+    }
+    // 通配符写法不是真实文件路径，不能拿去和监控根拼接拼接；
+    // 交给分词器按「路径段」处理（`anchor/mid_re*/goal.txt` 里的 `*` 是段内通配）。
+    if trimmed.contains('*') || trimmed.contains('?') {
+        return false;
+    }
+    // 以 `/` 结尾是「目录后缀」搜索语法（`oo.rs/` 表示名字以 oo.rs 结尾的节点），
+    // 同样不是相对路径。
+    if trimmed.ends_with('/') {
+        return false;
+    }
+    trimmed.contains('/') || trimmed.contains('\\')
 }
 
 fn resolve_filter_paths(mut filter: Filter, root: &Path) -> Filter {
@@ -293,8 +319,23 @@ fn resolve_filter_paths(mut filter: Filter, root: &Path) -> Filter {
     filter
 }
 
-fn should_resolve_relative_filter_path(value: &str) -> bool {
+/// 去掉包裹整个值的成对引号（`parent:"/a/b"` 的 raw 会保留引号，
+/// 直接拿它做 `starts_with('/')` 判断会把绝对路径误判成相对路径）。
+fn strip_wrapping_quotes(value: &str) -> &str {
     let trimmed = value.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' || first == b'\'') && last == first {
+            return trimmed[1..trimmed.len() - 1].trim();
+        }
+    }
+    trimmed
+}
+
+fn should_resolve_relative_filter_path(value: &str) -> bool {
+    let trimmed = strip_wrapping_quotes(value);
     if trimmed.is_empty() {
         return false;
     }
@@ -302,20 +343,6 @@ fn should_resolve_relative_filter_path(value: &str) -> bool {
         return false;
     }
     !is_windows_absolute_path(trimmed)
-}
-
-fn should_resolve_relative_path(value: &str) -> bool {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    if trimmed.starts_with('/') || trimmed.starts_with('~') || trimmed.starts_with("\\\\") {
-        return false;
-    }
-    if is_windows_absolute_path(trimmed) {
-        return false;
-    }
-    trimmed.contains('/') || trimmed.contains('\\')
 }
 
 fn is_windows_absolute_path(value: &str) -> bool {
@@ -524,14 +551,59 @@ mod tests {
     }
 
     #[test]
-    fn resolves_relative_word_paths_against_root() {
-        let root = Path::new("/Users/demo/workspace");
-        let query = resolve("src/**/*.rs", root.to_string_lossy().as_ref());
-        match query.expr {
-            Expr::Term(Term::Word(word)) => {
-                assert_eq!(word, root.join("src/**/*.rs").to_string_lossy());
+    fn keeps_word_paths_unresolved_for_segment_matching() {
+        let root = "/Users/demo/workspace";
+        // 词项里的路径不做「拼接到监控根」的处理，保留原样交给分词器按路径段匹配：
+        // 首段按后缀、末段按前缀，`src/main.rs` 因此也能命中 `mylib-src/main.rs`。
+        // 需要锚定目录时用 `infolder:` / `parent:`。
+        for input in ["src/main.rs", "a/b/c.txt", "foo/", "dist/x.dmg"] {
+            let query = resolve(input, root);
+            match query.expr {
+                Expr::Term(Term::Word(word)) => assert_eq!(word, input, "不应被拼接: {input}"),
+                other => panic!("Unexpected expr for {input}: {other:?}"),
             }
-            other => panic!("Unexpected expr: {other:?}"),
+        }
+    }
+
+    /// 通配符与「目录后缀」写法不是真实文件路径，不能和监控根拼接：
+    /// 拼接后首段会被固定成监控根的第一层目录，路径段匹配就永远落空。
+    #[test]
+    fn keeps_pattern_like_word_paths_unresolved() {
+        let root = "/Users/demo/workspace";
+        for input in [
+            "src/**/*.rs",
+            "anchor/mid_re*/goal.txt",
+            "work-anchor/mid_release/prefix-target*",
+            "oo.rs/",
+        ] {
+            let query = resolve(input, root);
+            match query.expr {
+                Expr::Term(Term::Word(word)) => {
+                    assert_eq!(word, input, "模式写法不应被当作相对路径展开: {input}")
+                }
+                other => panic!("Unexpected expr for {input}: {other:?}"),
+            }
+        }
+    }
+
+    /// 过滤器参数被引号包裹时，必须先去引号再判断绝对/相对，
+    /// 否则 `parent:"/abs"` 会被误判成相对路径并重复拼接监控根。
+    #[test]
+    fn does_not_prefix_quoted_absolute_filter_paths() {
+        let root = Path::new("/Users/demo/workspace");
+        for input in [
+            r#"parent:"/Users/demo/other""#,
+            r#"infolder:"/Users/demo/other""#,
+        ] {
+            let query = resolve(input, root.to_string_lossy().as_ref());
+            let Expr::Term(Term::Filter(filter)) = query.expr else {
+                panic!("expected filter for {input}");
+            };
+            let raw = filter.argument.expect("filter argument").raw;
+            assert_eq!(
+                raw, r#""/Users/demo/other""#,
+                "绝对路径不应拼接监控根: {input}"
+            );
         }
     }
 
