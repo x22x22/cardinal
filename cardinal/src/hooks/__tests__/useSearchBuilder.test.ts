@@ -153,9 +153,12 @@ describe('buildSearchQuery', () => {
     expect(getSearchAutocompleteSuggestions('ex', ENGLISH_AUTOCOMPLETE_CONFIG)[0]?.label).toBe(
       'Extension',
     );
-    expect(normalizeSearchAliasQuery('Files suffix:ts scope:src pattern:^App', ENGLISH_AUTOCOMPLETE_CONFIG)).toBe(
-      'file: ext:ts path:src regex:^App',
-    );
+    expect(
+      normalizeSearchAliasQuery(
+        'Files suffix:ts scope:src pattern:^App',
+        ENGLISH_AUTOCOMPLETE_CONFIG,
+      ),
+    ).toBe('file: ext:ts path:src regex:^App');
   });
 
   it('includes syntax preview in autocomplete suggestions', () => {
@@ -168,22 +171,32 @@ describe('buildSearchQuery', () => {
     expect(suggestions.map((item) => item.label)).toEqual(
       expect.arrayContaining(['ts', 'tsx', 'txt']),
     );
-    expect(applySearchAutocomplete('ext:t', suggestions[0]!)).toBe(`${suggestions[0]!.insertText} `);
+    expect(applySearchAutocomplete('ext:t', suggestions[0]!)).toBe(
+      `${suggestions[0]!.insertText} `,
+    );
   });
 
   it('supports path and dir value autocomplete from recent paths and watch root', () => {
     expect(
-      getPathAutocompleteSuggestions('path:src', '/Users/demo/workspace', ['src/hooks', 'src/pages'])
-        .map((item) => item.label),
+      getPathAutocompleteSuggestions('path:src', '/Users/demo/workspace', [
+        'src/hooks',
+        'src/pages',
+      ]).map((item) => item.label),
     ).toEqual(expect.arrayContaining(['src/hooks', 'src/pages', 'src']));
 
-    expect(applySearchAutocomplete('dir:src', getPathAutocompleteSuggestions('dir:src', '', ['src pages'])[0]!)).toBe(
-      'dir:"src pages" ',
-    );
+    expect(
+      applySearchAutocomplete(
+        'dir:src',
+        getPathAutocompleteSuggestions('dir:src', '', ['src pages'])[0]!,
+      ),
+    ).toBe('dir:"src pages" ');
   });
 
   it('supports quoted path autocomplete while typing spaced paths', () => {
-    const suggestions = getPathAutocompleteSuggestions('dir:"src p', '', ['src pages', 'src panels']);
+    const suggestions = getPathAutocompleteSuggestions('dir:"src p', '', [
+      'src pages',
+      'src panels',
+    ]);
     expect(suggestions.map((item) => item.label)).toEqual(
       expect.arrayContaining(['src pages', 'src panels', 'src p']),
     );
@@ -255,18 +268,14 @@ describe('buildSearchQuery', () => {
 
   it('renders chips from provided i18n labels', () => {
     const { result } = renderHook(() =>
-      useSearchBuilder(
-        '',
-        DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG,
-        {
-          fileChip: 'Files',
-          folderChip: 'Folders',
-          regexChip: 'Regex',
-          extensionChip: 'Extension',
-          pathChip: 'Scope',
-          dirChip: 'Directory',
-        },
-      ),
+      useSearchBuilder('', DEFAULT_SEARCH_AUTOCOMPLETE_CONFIG, {
+        fileChip: 'Files',
+        folderChip: 'Folders',
+        regexChip: 'Regex',
+        extensionChip: 'Extension',
+        pathChip: 'Scope',
+        dirChip: 'Directory',
+      }),
     );
 
     act(() => {

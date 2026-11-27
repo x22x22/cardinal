@@ -12,6 +12,7 @@ const createVirtualListRef = (
   overrides?: Partial<VirtualListHandle>,
 ): MutableRefObject<VirtualListHandle | null> => ({
   current: {
+    focus: () => {},
     scrollToTop: () => {},
     scrollToRow: () => {},
     ensureRangeLoaded: () => {},

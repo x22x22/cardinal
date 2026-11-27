@@ -17,12 +17,18 @@ import {
   persistWindowActivationShortcut,
   validateWindowActivationShortcut,
 } from '../windowActivationShortcutPreference';
+import {
+  DEFAULT_RESULT_OPEN_SHORTCUT,
+  getStoredResultOpenShortcut,
+  persistResultOpenShortcut,
+  validateResultOpenShortcut,
+} from '../resultOpenShortcutPreference';
 import type { FullDiskAccessStatus } from './useFullDiskAccessPermission';
 import { useIgnorePaths } from './useIgnorePaths';
-import { useWatchRoot } from './useWatchRoot';
+import { useWatchRoots } from './useWatchRoot';
 
 type WatchConfigChangePayload = {
-  watchRoot: string;
+  watchRoots: string[];
   ignorePaths: string[];
 };
 
@@ -43,8 +49,11 @@ type UseAppPreferencesResult = {
   windowActivationShortcut: string;
   defaultWindowActivationShortcut: string;
   handleWindowActivationShortcutChange: (shortcut: string) => Promise<void>;
-  watchRoot: string;
-  defaultWatchRoot: string;
+  resultOpenShortcut: string;
+  defaultResultOpenShortcut: string;
+  handleResultOpenShortcutChange: (shortcut: string) => void;
+  watchRoots: string[];
+  defaultWatchRoots: string[];
   ignorePaths: string[];
   defaultIgnorePaths: string[];
   preferencesResetToken: number;
@@ -65,7 +74,7 @@ export function useAppPreferences({
   refreshSearchResults,
   i18n,
 }: UseAppPreferencesOptions): UseAppPreferencesResult {
-  const { watchRoot, setWatchRoot, defaultWatchRoot } = useWatchRoot();
+  const { watchRoots, setWatchRoots, defaultWatchRoots } = useWatchRoots();
   const { ignorePaths, setIgnorePaths, defaultIgnorePaths } = useIgnorePaths();
   const logicStartedRef = useRef(false);
   const startupMinimizeHandledRef = useRef(false);
@@ -76,6 +85,9 @@ export function useAppPreferences({
   );
   const [windowActivationShortcut, setWindowActivationShortcutState] = useState<string>(() =>
     getStoredWindowActivationShortcut(),
+  );
+  const [resultOpenShortcut, setResultOpenShortcutState] = useState<string>(() =>
+    getStoredResultOpenShortcut(),
   );
   const [preferencesResetToken, setPreferencesResetToken] = useState(0);
 
@@ -114,48 +126,64 @@ export function useAppPreferences({
   }, []);
 
   useEffect(() => {
-    if (isCheckingFullDiskAccess) {
-      return;
-    }
-    if (fullDiskAccessStatus !== 'granted') {
-      return;
-    }
-    if (!watchRoot) {
-      return;
-    }
-    if (logicStartedRef.current) {
+    // 启动配置是索引构建的唯一入口：条件不满足时必须留下可查的痕迹，
+    // 否则表现就是「界面在、但索引永远不开始」。
+    const blockedReason = isCheckingFullDiskAccess
+      ? 'checking_full_disk_access'
+      : fullDiskAccessStatus !== 'granted'
+        ? 'full_disk_access_denied'
+        : watchRoots.length === 0
+          ? 'watch_root_empty'
+          : logicStartedRef.current
+            ? 'already_started'
+            : null;
+
+    if (blockedReason) {
+      console.log(`[cardinal.boot] start_logic 未触发：${blockedReason}`);
+      if (blockedReason !== 'already_started' && blockedReason !== 'checking_full_disk_access') {
+        void invoke('log_frontend_error', {
+          message: `start_logic 未触发：${blockedReason}`,
+        }).catch(() => {});
+      }
       return;
     }
 
     logicStartedRef.current = true;
-    void invoke('start_logic', { watchRoot, ignorePaths });
-  }, [fullDiskAccessStatus, ignorePaths, isCheckingFullDiskAccess, watchRoot]);
+    console.log('[cardinal.boot] 发送 start_logic', { watchRoots, ignorePaths });
+    void invoke('start_logic', {
+      watchRoot: watchRoots[0] ?? '/',
+      watchRoots,
+      ignorePaths,
+    });
+  }, [fullDiskAccessStatus, ignorePaths, isCheckingFullDiskAccess, watchRoots]);
 
   const applyWatchConfig = useCallback(
-    (nextWatchRoot: string, nextIgnorePaths: string[]) => {
+    (nextWatchRoots: string[], nextIgnorePaths: string[]) => {
       const watchConfigChanged =
-        nextWatchRoot !== watchRoot || !areStringArraysEqual(nextIgnorePaths, ignorePaths);
+        !areStringArraysEqual(nextWatchRoots, watchRoots) ||
+        !areStringArraysEqual(nextIgnorePaths, ignorePaths);
 
       if (!watchConfigChanged) {
         return;
       }
 
-      setWatchRoot(nextWatchRoot);
+      setWatchRoots(nextWatchRoots);
       setIgnorePaths(nextIgnorePaths);
-      if (logicStartedRef.current && nextWatchRoot) {
+      if (logicStartedRef.current && nextWatchRoots.length > 0) {
         void setWatchConfig({
-          watchRoot: nextWatchRoot,
+          watchRoot: nextWatchRoots[0] ?? '/',
+          watchRoots: nextWatchRoots,
           ignorePaths: nextIgnorePaths,
         });
       }
       refreshSearchResults();
     },
-    [ignorePaths, refreshSearchResults, setIgnorePaths, setWatchRoot, watchRoot],
+    [ignorePaths, refreshSearchResults, setIgnorePaths, setWatchRoots, watchRoots],
   );
 
   const handleWatchConfigChange = useCallback(
     (next: WatchConfigChangePayload) => {
-      applyWatchConfig(next.watchRoot, next.ignorePaths);
+      applyWatchConfig(next.watchRoots, next.ignorePaths);
     },
     [applyWatchConfig],
   );
@@ -174,18 +202,29 @@ export function useAppPreferences({
     await updateTrayOpenAccelerator(normalizedShortcut);
   }, []);
 
+  const handleResultOpenShortcutChange = useCallback((shortcut: string) => {
+    const validationResult = validateResultOpenShortcut(shortcut);
+    if (!validationResult.isValid) {
+      throw new Error(validationResult.errorKey);
+    }
+
+    persistResultOpenShortcut(validationResult.normalizedShortcut);
+    setResultOpenShortcutState(validationResult.normalizedShortcut);
+  }, []);
+
   const handleResetPreferences = useCallback(() => {
     setTrayIconEnabled(false);
     setLaunchMinimizedToTray(true);
     void handleWindowActivationShortcutChange('').catch((error) => {
       console.error('Failed to reset window activation shortcut', error);
     });
+    handleResultOpenShortcutChange(DEFAULT_RESULT_OPEN_SHORTCUT);
     persistThemePreference('system');
     applyThemePreference('system');
     const nextLanguage = getBrowserLanguage();
     void i18n.changeLanguage(nextLanguage);
     setPreferencesResetToken((token) => token + 1);
-  }, [handleWindowActivationShortcutChange, i18n]);
+  }, [handleResultOpenShortcutChange, handleWindowActivationShortcutChange, i18n]);
 
   const closePreferences = useCallback(() => setIsPreferencesOpen(false), []);
 
@@ -199,8 +238,11 @@ export function useAppPreferences({
     windowActivationShortcut,
     defaultWindowActivationShortcut: '',
     handleWindowActivationShortcutChange,
-    watchRoot,
-    defaultWatchRoot,
+    resultOpenShortcut,
+    defaultResultOpenShortcut: DEFAULT_RESULT_OPEN_SHORTCUT,
+    handleResultOpenShortcutChange,
+    watchRoots,
+    defaultWatchRoots,
     ignorePaths,
     defaultIgnorePaths,
     preferencesResetToken,

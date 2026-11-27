@@ -41,5 +41,21 @@ export const SEARCH_DEBOUNCE_MS = 300;
 export const STATUS_FADE_DELAY_MS = 2000;
 export const OVERSCAN_ROW_COUNT = 1;
 
+// Search reliability tuning.
+// Upper bound (ms) a single `search` IPC request may stay in flight before the
+// watchdog gives up and surfaces a readable error. The backend runs on a
+// single-threaded event loop, so a busy FSEvents scan can starve the command
+// and leave an unbounded pending promise; without this bound the UI would spin
+// forever.
+export const SEARCH_TIMEOUT_MS = 10_000;
+// Delay (ms) before the loading UI is shown for a re-query. Keeps fast responses
+// from flashing a spinner.
+export const SEARCH_LOADING_DELAY_MS = 150;
+// Delay (ms) before re-issuing a search that the backend rejected with
+// `index_building`. A single automatic retry is allowed per user-initiated
+// query; the delay keeps the retry from becoming a request storm while the
+// index rebuild runs.
+export const SEARCH_INDEX_BUILDING_RETRY_DELAY_MS = 1500;
+
 export const MIN_COL_WIDTH = 30;
 export const MAX_COL_WIDTH = 10000;

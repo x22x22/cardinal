@@ -50,13 +50,21 @@
       "dirAlias": "directory",
       "regexDescription": "Switch to regular expression",
       "regexAlias": "pattern"
-    }
+    },
+    "timeout": "Search timed out. The background index may be busy, please try again.",
+    "indexing": "Index update in progress, results may be incomplete.",
+    "retry": "Retry",
+    "failed": "Search failed, please try again."
   },
   "stateDisplay": {
     "loading": "Searching...",
     "error": "Search Error",
     "emptyTitle": "No results for \"{{query}}\"",
-    "emptyMessage": "Try adjusting your keywords or filters."
+    "emptyMessage": "Try adjusting your keywords or filters.",
+    "idleTitle": "Type to start searching",
+    "idleMessage": "Search by name, path, regex, or filters — e.g. folder:src, ext:ts, regex:^Report",
+    "indexingTitle": "Building index",
+    "indexingMessage": "{{count}} files indexed so far. Search becomes available when this finishes."
   },
   "columns": {
     "filename": "Filename",
@@ -184,6 +192,14 @@
         "registerFailed": "Unable to register that shortcut. Check the format or choose a different combination."
       }
     },
+    "resultOpenShortcut": {
+      "label": "Open result shortcut",
+      "help": "Click the field and press the key used to open selected search results, such as Command+O or Enter.",
+      "recordingHelp": "Recording... press a shortcut such as Command+O or Enter, or press Escape to cancel.",
+      "errors": {
+        "invalidFormat": "Use a valid shortcut such as Command+O or Enter."
+      }
+    },
     "sortingLimit": {
       "label": "Sorting limit"
     },
@@ -209,8 +225,8 @@
     "quit": "Quit Cardinal"
   },
   "watchRoot": {
-    "label": "Monitor root path",
-    "help": "Changing this will rebuild the index for the new directory.",
+    "label": "Watch roots (one per line, order is index build priority)",
+    "help": "Multiple roots are supported; a root covered by a parent path is skipped automatically.",
     "errors": {
       "required": "Please enter a path.",
       "absolute": "Please enter an absolute path starting with '/' or '~'."

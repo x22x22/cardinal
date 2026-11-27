@@ -50,13 +50,21 @@
       "dirAlias": "目录",
       "regexDescription": "切换到正则表达式",
       "regexAlias": "正则"
-    }
+    },
+    "timeout": "搜索超时，后台索引可能正忙，请稍后重试",
+    "indexing": "索引更新中，结果可能不完整",
+    "retry": "重试",
+    "failed": "搜索失败，请稍后重试"
   },
   "stateDisplay": {
     "loading": "正在搜索…",
     "error": "搜索出现错误",
     "emptyTitle": "\"{{query}}\" 没有匹配结果",
-    "emptyMessage": "尝试调整关键字或筛选条件。"
+    "emptyMessage": "尝试调整关键字或筛选条件。",
+    "idleTitle": "输入关键词开始搜索",
+    "idleMessage": "支持文件名、路径、正则与筛选条件，例如 folder:src、ext:ts、regex:^Report",
+    "indexingTitle": "正在构建索引",
+    "indexingMessage": "已收录 {{count}} 个文件，完成后即可搜索。"
   },
   "columns": {
     "filename": "文件名",
@@ -183,6 +191,14 @@
         "registerFailed": "无法注册该快捷键，请检查格式或更换组合键。"
       }
     },
+    "resultOpenShortcut": {
+      "label": "打开搜索结果快捷键",
+      "help": "点击输入框后按下用于打开已选搜索结果的快捷键，例如 Command+O 或 Enter。",
+      "recordingHelp": "录制中……请按下快捷键，例如 Command+O 或 Enter；按 Escape 可取消。",
+      "errors": {
+        "invalidFormat": "请输入有效快捷键，例如 Command+O 或 Enter。"
+      }
+    },
     "sortingLimit": {
       "label": "排序上限"
     },
@@ -208,8 +224,8 @@
     "quit": "退出 Cardinal"
   },
   "watchRoot": {
-    "label": "监控根路径",
-    "help": "更改该路径会重新构建新目录的索引。",
+    "label": "监控路径（每行一个，顺序即索引构建优先级）",
+    "help": "支持多个根目录；若某条路径被更上层的路径覆盖，会被自动跳过。",
     "errors": {
       "required": "请输入路径。",
       "absolute": "请输入以“/”或“~”开头的绝对路径。"

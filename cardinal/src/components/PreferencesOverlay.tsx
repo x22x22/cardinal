@@ -5,6 +5,10 @@ import {
   recordWindowActivationShortcut,
   validateWindowActivationShortcut,
 } from '../windowActivationShortcutPreference';
+import {
+  recordResultOpenShortcut,
+  validateResultOpenShortcut,
+} from '../resultOpenShortcutPreference';
 import ThemeSwitcher from './ThemeSwitcher';
 import LanguageSwitcher from './LanguageSwitcher';
 
@@ -21,9 +25,12 @@ type PreferencesOverlayProps = {
   windowActivationShortcut: string;
   defaultWindowActivationShortcut: string;
   onWindowActivationShortcutChange: (shortcut: string) => Promise<void>;
-  watchRoot: string;
-  defaultWatchRoot: string;
-  onWatchConfigChange: (next: { watchRoot: string; ignorePaths: string[] }) => void;
+  resultOpenShortcut: string;
+  defaultResultOpenShortcut: string;
+  onResultOpenShortcutChange: (shortcut: string) => void;
+  watchRoots: string[];
+  defaultWatchRoots: string[];
+  onWatchConfigChange: (next: { watchRoots: string[]; ignorePaths: string[] }) => void;
   ignorePaths: string[];
   defaultIgnorePaths: string[];
   onReset: () => void;
@@ -43,8 +50,11 @@ export function PreferencesOverlay({
   windowActivationShortcut,
   defaultWindowActivationShortcut,
   onWindowActivationShortcutChange,
-  watchRoot,
-  defaultWatchRoot,
+  resultOpenShortcut,
+  defaultResultOpenShortcut,
+  onResultOpenShortcutChange,
+  watchRoots,
+  defaultWatchRoots,
   onWatchConfigChange,
   ignorePaths,
   defaultIgnorePaths,
@@ -53,18 +63,25 @@ export function PreferencesOverlay({
 }: PreferencesOverlayProps): React.JSX.Element | null {
   const { t } = useTranslation();
   const windowActivationShortcutInputRef = useRef<HTMLInputElement | null>(null);
+  const resultOpenShortcutInputRef = useRef<HTMLInputElement | null>(null);
   const isRecordingWindowActivationShortcutRef = useRef(false);
+  const isRecordingResultOpenShortcutRef = useRef(false);
   const [thresholdInput, setThresholdInput] = useState<string>(() => sortThreshold.toString());
   const [windowActivationShortcutInput, setWindowActivationShortcutInput] = useState<string>(
     () => windowActivationShortcut,
   );
-  const [watchRootInput, setWatchRootInput] = useState<string>(() => watchRoot);
+  const [resultOpenShortcutInput, setResultOpenShortcutInput] = useState<string>(
+    () => resultOpenShortcut,
+  );
+  const [watchRootsInput, setWatchRootsInput] = useState<string>(() => watchRoots.join('\n'));
   const [ignorePathsInput, setIgnorePathsInput] = useState<string>(() => ignorePaths.join('\n'));
   const [windowActivationShortcutError, setWindowActivationShortcutError] = useState<string | null>(
     null,
   );
+  const [resultOpenShortcutError, setResultOpenShortcutError] = useState<string | null>(null);
   const [isRecordingWindowActivationShortcut, setIsRecordingWindowActivationShortcut] =
     useState(false);
+  const [isRecordingResultOpenShortcut, setIsRecordingResultOpenShortcut] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -88,18 +105,22 @@ export function PreferencesOverlay({
     }
     setThresholdInput(sortThreshold.toString());
     setWindowActivationShortcutInput(windowActivationShortcut);
+    setResultOpenShortcutInput(resultOpenShortcut);
     setWindowActivationShortcutError(null);
+    setResultOpenShortcutError(null);
     isRecordingWindowActivationShortcutRef.current = false;
+    isRecordingResultOpenShortcutRef.current = false;
     setIsRecordingWindowActivationShortcut(false);
-  }, [open, sortThreshold, windowActivationShortcut]);
+    setIsRecordingResultOpenShortcut(false);
+  }, [open, resultOpenShortcut, sortThreshold, windowActivationShortcut]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
-    setWatchRootInput(watchRoot);
+    setWatchRootsInput(watchRoots.join('\n'));
     setIgnorePathsInput(ignorePaths.join('\n'));
-  }, [open, watchRoot, ignorePaths]);
+  }, [open, watchRoots, ignorePaths]);
 
   useEffect(() => {
     if (!open || !isRecordingWindowActivationShortcut) {
@@ -116,6 +137,22 @@ export function PreferencesOverlay({
       input.select();
     });
   }, [isRecordingWindowActivationShortcut, open]);
+
+  useEffect(() => {
+    if (!open || !isRecordingResultOpenShortcut) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const input = resultOpenShortcutInputRef.current;
+      if (!input) {
+        return;
+      }
+
+      input.focus();
+      input.select();
+    });
+  }, [isRecordingResultOpenShortcut, open]);
 
   const commitThreshold = useCallback(() => {
     const numericText = thresholdInput.replace(/[^\d]/g, '');
@@ -140,12 +177,21 @@ export function PreferencesOverlay({
     }
   };
 
-  const { errorKey: watchRootErrorKey } = getWatchRootValidation(watchRootInput);
+  // 多根：逐行校验，任意一行非法就阻断保存。
+  const parsedWatchRoots = watchRootsInput
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const watchRootErrorKey =
+    parsedWatchRoots
+      .map((line) => getWatchRootValidation(line).errorKey)
+      .find((key) => key != null) ??
+    (parsedWatchRoots.length === 0 ? 'watchRoot.errors.required' : null);
   const watchRootErrorMessage = watchRootErrorKey ? t(watchRootErrorKey) : null;
 
-  const handleWatchRootKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+  const handleWatchRootsKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key === 'Escape') {
-      setWatchRootInput(watchRoot);
+      setWatchRootsInput(watchRoots.join('\n'));
     }
   };
 
@@ -170,6 +216,12 @@ export function PreferencesOverlay({
     : t(shortcutValidationResult.errorKey);
   const effectiveWindowActivationShortcutError =
     windowActivationShortcutError ?? shortcutValidationError;
+  const resultOpenShortcutValidationResult = validateResultOpenShortcut(resultOpenShortcutInput);
+  const resultOpenShortcutValidationError = resultOpenShortcutValidationResult.isValid
+    ? null
+    : t(resultOpenShortcutValidationResult.errorKey);
+  const effectiveResultOpenShortcutError =
+    resultOpenShortcutError ?? resultOpenShortcutValidationError;
 
   const handleWindowActivationShortcutKeyDown = (
     event: React.KeyboardEvent<HTMLInputElement>,
@@ -211,9 +263,51 @@ export function PreferencesOverlay({
     setIsRecordingWindowActivationShortcut(true);
   };
 
+  const handleResultOpenShortcutKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (!isRecordingResultOpenShortcutRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.key === 'Escape') {
+      isRecordingResultOpenShortcutRef.current = false;
+      setIsRecordingResultOpenShortcut(false);
+      return;
+    }
+
+    const recordedShortcut = recordResultOpenShortcut(event.nativeEvent);
+    if (!recordedShortcut) {
+      return;
+    }
+
+    setResultOpenShortcutInput(recordedShortcut);
+    setResultOpenShortcutError(null);
+    isRecordingResultOpenShortcutRef.current = false;
+    setIsRecordingResultOpenShortcut(false);
+  };
+
+  const handleResultOpenShortcutChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    setResultOpenShortcutInput(event.target.value);
+    setResultOpenShortcutError(null);
+  };
+
+  const startResultOpenShortcutRecording = (): void => {
+    setResultOpenShortcutError(null);
+    isRecordingResultOpenShortcutRef.current = true;
+    setIsRecordingResultOpenShortcut(true);
+  };
+
   const handleSave = async (): Promise<void> => {
-    if (watchRootErrorMessage || ignorePathsErrorMessage || shortcutValidationError) {
+    if (
+      watchRootErrorMessage ||
+      ignorePathsErrorMessage ||
+      shortcutValidationError ||
+      resultOpenShortcutValidationError
+    ) {
       setWindowActivationShortcutError(shortcutValidationError);
+      setResultOpenShortcutError(resultOpenShortcutValidationError);
       return;
     }
 
@@ -227,11 +321,19 @@ export function PreferencesOverlay({
       return;
     }
 
+    try {
+      onResultOpenShortcutChange(resultOpenShortcutInput);
+      setResultOpenShortcutError(null);
+    } catch {
+      setResultOpenShortcutError(t('preferences.resultOpenShortcut.errors.invalidFormat'));
+      return;
+    }
+
     commitThreshold();
-    const trimmedWatchRoot = watchRootInput.trim();
-    onWatchConfigChange({ watchRoot: trimmedWatchRoot, ignorePaths: parsedIgnorePaths });
+    onWatchConfigChange({ watchRoots: parsedWatchRoots, ignorePaths: parsedIgnorePaths });
     setWindowActivationShortcutInput(shortcutValidationResult.normalizedShortcut);
-    setWatchRootInput(trimmedWatchRoot);
+    setResultOpenShortcutInput(resultOpenShortcutValidationResult.normalizedShortcut);
+    setWatchRootsInput(parsedWatchRoots.join('\n'));
     setIgnorePathsInput(parsedIgnorePaths.join('\n'));
     onClose();
   };
@@ -239,10 +341,14 @@ export function PreferencesOverlay({
   const handleReset = (): void => {
     setThresholdInput(defaultSortThreshold.toString());
     setWindowActivationShortcutInput(defaultWindowActivationShortcut);
+    setResultOpenShortcutInput(defaultResultOpenShortcut);
     setWindowActivationShortcutError(null);
+    setResultOpenShortcutError(null);
     isRecordingWindowActivationShortcutRef.current = false;
+    isRecordingResultOpenShortcutRef.current = false;
     setIsRecordingWindowActivationShortcut(false);
-    setWatchRootInput(defaultWatchRoot);
+    setIsRecordingResultOpenShortcut(false);
+    setWatchRootsInput(defaultWatchRoots.join('\n'));
     setIgnorePathsInput(defaultIgnorePaths.join('\n'));
     onReset();
   };
@@ -362,6 +468,39 @@ export function PreferencesOverlay({
               ) : null}
             </div>
           </div>
+          <div className="preferences-row preferences-row--stacked">
+            <div className="preferences-row__details">
+              <p className="preferences-label">{t('preferences.resultOpenShortcut.label')}</p>
+            </div>
+            <div className="preferences-control preferences-control--stacked">
+              <input
+                ref={resultOpenShortcutInputRef}
+                className="preferences-field preferences-watch-root-input"
+                type="text"
+                value={resultOpenShortcutInput}
+                onChange={handleResultOpenShortcutChange}
+                onKeyDown={handleResultOpenShortcutKeyDown}
+                onFocus={startResultOpenShortcutRecording}
+                onClick={startResultOpenShortcutRecording}
+                aria-label={t('preferences.resultOpenShortcut.label')}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={defaultResultOpenShortcut}
+              />
+              <p className="preferences-field-hint">
+                {isRecordingResultOpenShortcut
+                  ? t('preferences.resultOpenShortcut.recordingHelp')
+                  : t('preferences.resultOpenShortcut.help')}
+              </p>
+              {effectiveResultOpenShortcutError ? (
+                <div aria-live="polite">
+                  <p className="permission-status permission-status--error preferences-field-error">
+                    {effectiveResultOpenShortcutError}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          </div>
           <div className="preferences-row">
             <div className="preferences-row__details">
               <p className="preferences-label">{t('preferences.sortingLimit.label')}</p>
@@ -385,15 +524,16 @@ export function PreferencesOverlay({
               </p>
             </div>
             <div className="preferences-control">
-              <input
-                className="preferences-field preferences-number-input preferences-watch-root-input"
-                type="text"
-                value={watchRootInput}
-                onChange={(event) => setWatchRootInput(event.target.value)}
-                onKeyDown={handleWatchRootKeyDown}
+              <textarea
+                className="preferences-field preferences-watch-root-input preferences-watch-roots-input"
+                rows={Math.min(6, Math.max(2, parsedWatchRoots.length + 1))}
+                value={watchRootsInput}
+                onChange={(event) => setWatchRootsInput(event.target.value)}
+                onKeyDown={handleWatchRootsKeyDown}
                 aria-label={t('watchRoot.label')}
                 autoComplete="off"
                 spellCheck={false}
+                placeholder={'/Users/you/project\n/Volumes/data/work'}
               />
               {watchRootErrorMessage ? (
                 <div aria-live="polite">
@@ -438,7 +578,10 @@ export function PreferencesOverlay({
               void handleSave();
             }}
             disabled={Boolean(
-              watchRootErrorMessage || ignorePathsErrorMessage || shortcutValidationError,
+              watchRootErrorMessage ||
+              ignorePathsErrorMessage ||
+              shortcutValidationError ||
+              resultOpenShortcutValidationError,
             )}
           >
             {t('preferences.save')}

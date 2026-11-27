@@ -224,7 +224,15 @@ vi.mock('../hooks/useAppPreferences', () => ({
     closePreferences: vi.fn(),
     trayIconEnabled: false,
     setTrayIconEnabled: vi.fn(),
-    watchRoot: '/',
+    launchMinimizedToTray: true,
+    setLaunchMinimizedToTray: vi.fn(),
+    windowActivationShortcut: '',
+    defaultWindowActivationShortcut: '',
+    handleWindowActivationShortcutChange: vi.fn(),
+    resultOpenShortcut: 'Command+O',
+    defaultResultOpenShortcut: 'Command+O',
+    handleResultOpenShortcutChange: vi.fn(),
+    watchRoots: ['/'],
     defaultWatchRoot: '/',
     ignorePaths: ['/Volumes'],
     defaultIgnorePaths: ['/Volumes'],
@@ -273,15 +281,21 @@ describe('App context menu regression', () => {
     testState.selectedIndices = [0];
     testState.selectedPaths = ['/stale-a', '/stale-b'];
 
-    mocks.useContextMenuMock
-      .mockReturnValueOnce({
-        showContextMenu: mocks.showFilesContextMenu,
-        showHeaderContextMenu: vi.fn(),
-      })
-      .mockReturnValueOnce({
-        showContextMenu: mocks.showEventsContextMenu,
-        showHeaderContextMenu: vi.fn(),
-      });
+    // 用「奇偶调用」而不是 mockReturnValueOnce：App 的 render 次数会随
+    // 状态更新变化，Once 队列一旦耗尽就会返回 undefined。
+    let contextMenuCalls = 0;
+    mocks.useContextMenuMock.mockImplementation(() => {
+      contextMenuCalls += 1;
+      return contextMenuCalls % 2 === 1
+        ? {
+            showContextMenu: mocks.showFilesContextMenu,
+            showHeaderContextMenu: vi.fn(),
+          }
+        : {
+            showContextMenu: mocks.showEventsContextMenu,
+            showHeaderContextMenu: vi.fn(),
+          };
+    });
   });
 
   it('uses clicked row path for context menu when row is not already selected', () => {

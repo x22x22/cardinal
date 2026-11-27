@@ -1,3 +1,6 @@
 target
 .DS_Store
 .vscode
+# Local build/scratch output (DMG+app copies, build logs, probe artifacts)
+/tmp/
+/dist/

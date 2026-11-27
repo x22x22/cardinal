@@ -27,7 +27,7 @@
     "targets": "all",
     "category": "Utilities",
     "macOS": {
-      "signingIdentity": "-",
+      "signingIdentity": "Developer ID Application: WEIJIE ZOU (G2K57NHA76)",
       "minimumSystemVersion": "12.0"
     },
     "icon": [

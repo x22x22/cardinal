@@ -281,7 +281,9 @@ export function SearchBar({
                 placeholder={extensionPlaceholder}
               />
               <div className="search-filter-suggestions">
-                <span className="search-filter-suggestions__label">{extensionSuggestionsLabel}</span>
+                <span className="search-filter-suggestions__label">
+                  {extensionSuggestionsLabel}
+                </span>
                 {SUGGESTED_EXTENSION_GROUPS.map((group) => {
                   const groupLabel =
                     group.key === 'document' ? documentExtensionsLabel : developmentExtensionsLabel;

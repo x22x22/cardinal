@@ -15,8 +15,12 @@ import {
   getStoredWindowActivationShortcut,
   persistWindowActivationShortcut,
 } from '../../windowActivationShortcutPreference';
+import {
+  getStoredResultOpenShortcut,
+  persistResultOpenShortcut,
+} from '../../resultOpenShortcutPreference';
 import { useIgnorePaths } from '../useIgnorePaths';
-import { useWatchRoot } from '../useWatchRoot';
+import { useWatchRoots } from '../useWatchRoot';
 import { useAppPreferences } from '../useAppPreferences';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -25,7 +29,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 vi.mock('../useWatchRoot', () => ({
-  useWatchRoot: vi.fn(),
+  useWatchRoots: vi.fn(),
 }));
 
 vi.mock('../useIgnorePaths', () => ({
@@ -69,12 +73,22 @@ vi.mock('../../windowActivationShortcutPreference', () => ({
   persistWindowActivationShortcut: vi.fn(),
 }));
 
+vi.mock('../../resultOpenShortcutPreference', () => ({
+  DEFAULT_RESULT_OPEN_SHORTCUT: 'Command+O',
+  getStoredResultOpenShortcut: vi.fn(),
+  validateResultOpenShortcut: (shortcut: string) => ({
+    isValid: true,
+    normalizedShortcut: shortcut.trim(),
+  }),
+  persistResultOpenShortcut: vi.fn(),
+}));
+
 vi.mock('../../i18n/config', () => ({
   getBrowserLanguage: vi.fn(),
 }));
 
 const mockedInvoke = vi.mocked(invoke);
-const mockedUseWatchRoot = vi.mocked(useWatchRoot);
+const mockedUseWatchRoots = vi.mocked(useWatchRoots);
 const mockedUseIgnorePaths = vi.mocked(useIgnorePaths);
 const mockedGetStoredTrayIconEnabled = vi.mocked(getStoredTrayIconEnabled);
 const mockedPersistTrayIconEnabled = vi.mocked(persistTrayIconEnabled);
@@ -88,9 +102,11 @@ const mockedSetWindowActivationShortcut = vi.mocked(setWindowActivationShortcut)
 const mockedGetBrowserLanguage = vi.mocked(getBrowserLanguage);
 const mockedGetStoredWindowActivationShortcut = vi.mocked(getStoredWindowActivationShortcut);
 const mockedPersistWindowActivationShortcut = vi.mocked(persistWindowActivationShortcut);
+const mockedGetStoredResultOpenShortcut = vi.mocked(getStoredResultOpenShortcut);
+const mockedPersistResultOpenShortcut = vi.mocked(persistResultOpenShortcut);
 
 describe('useAppPreferences', () => {
-  const setWatchRoot = vi.fn();
+  const setWatchRoots = vi.fn();
   const setIgnorePaths = vi.fn();
   const changeLanguage = vi.fn().mockResolvedValue(undefined);
   const refreshSearchResults = vi.fn();
@@ -98,10 +114,10 @@ describe('useAppPreferences', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockedUseWatchRoot.mockReturnValue({
-      watchRoot: '/workspace',
-      setWatchRoot,
-      defaultWatchRoot: '/',
+    mockedUseWatchRoots.mockReturnValue({
+      watchRoots: ['/workspace'],
+      setWatchRoots,
+      defaultWatchRoots: ['/'],
     });
     mockedUseIgnorePaths.mockReturnValue({
       ignorePaths: ['/Volumes'],
@@ -116,6 +132,7 @@ describe('useAppPreferences', () => {
     mockedInvoke.mockResolvedValue(undefined);
     mockedGetBrowserLanguage.mockReturnValue('fr-FR');
     mockedGetStoredWindowActivationShortcut.mockReturnValue('');
+    mockedGetStoredResultOpenShortcut.mockReturnValue('Command+O');
   });
 
   it('updates window activation shortcut preference', async () => {
@@ -137,6 +154,24 @@ describe('useAppPreferences', () => {
     expect(result.current.windowActivationShortcut).toBe('Command+Shift+K');
   });
 
+  it('updates result open shortcut preference', () => {
+    const { result } = renderHook(() =>
+      useAppPreferences({
+        fullDiskAccessStatus: 'denied',
+        isCheckingFullDiskAccess: false,
+        refreshSearchResults,
+        i18n: { changeLanguage },
+      }),
+    );
+
+    act(() => {
+      result.current.handleResultOpenShortcutChange(' Enter ');
+    });
+
+    expect(mockedPersistResultOpenShortcut).toHaveBeenCalledWith('Enter');
+    expect(result.current.resultOpenShortcut).toBe('Enter');
+  });
+
   it('starts logic once when permission is granted', async () => {
     const { rerender } = renderHook((props) => useAppPreferences(props), {
       initialProps: {
@@ -150,6 +185,7 @@ describe('useAppPreferences', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('start_logic', {
         watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/Volumes'],
       });
     });
@@ -220,6 +256,7 @@ describe('useAppPreferences', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('start_logic', {
         watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/Volumes'],
       });
     });
@@ -229,15 +266,16 @@ describe('useAppPreferences', () => {
 
     act(() => {
       result.current.handleWatchConfigChange({
-        watchRoot: '/tmp',
+        watchRoots: ['/tmp'],
         ignorePaths: ['/tmp/ignore'],
       });
     });
 
-    expect(setWatchRoot).toHaveBeenCalledWith('/tmp');
+    expect(setWatchRoots).toHaveBeenCalledWith(['/tmp']);
     expect(setIgnorePaths).toHaveBeenCalledWith(['/tmp/ignore']);
     expect(mockedSetWatchConfig).toHaveBeenCalledWith({
       watchRoot: '/tmp',
+      watchRoots: ['/tmp'],
       ignorePaths: ['/tmp/ignore'],
     });
     expect(refreshSearchResults).toHaveBeenCalledTimes(1);
@@ -256,23 +294,24 @@ describe('useAppPreferences', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('start_logic', {
         watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/Volumes'],
       });
     });
 
     mockedSetWatchConfig.mockClear();
     refreshSearchResults.mockClear();
-    setWatchRoot.mockClear();
+    setWatchRoots.mockClear();
     setIgnorePaths.mockClear();
 
     act(() => {
       result.current.handleWatchConfigChange({
-        watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/Volumes'],
       });
     });
 
-    expect(setWatchRoot).not.toHaveBeenCalled();
+    expect(setWatchRoots).not.toHaveBeenCalled();
     expect(setIgnorePaths).not.toHaveBeenCalled();
     expect(mockedSetWatchConfig).not.toHaveBeenCalled();
     expect(refreshSearchResults).not.toHaveBeenCalled();
@@ -291,26 +330,28 @@ describe('useAppPreferences', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('start_logic', {
         watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/Volumes'],
       });
     });
 
     mockedSetWatchConfig.mockClear();
     refreshSearchResults.mockClear();
-    setWatchRoot.mockClear();
+    setWatchRoots.mockClear();
     setIgnorePaths.mockClear();
 
     act(() => {
       result.current.handleWatchConfigChange({
-        watchRoot: '/new-root',
+        watchRoots: ['/new-root'],
         ignorePaths: ['/Volumes'], // same as before
       });
     });
 
-    expect(setWatchRoot).toHaveBeenCalledWith('/new-root');
+    expect(setWatchRoots).toHaveBeenCalledWith(['/new-root']);
     expect(setIgnorePaths).toHaveBeenCalledWith(['/Volumes']);
     expect(mockedSetWatchConfig).toHaveBeenCalledWith({
       watchRoot: '/new-root',
+      watchRoots: ['/new-root'],
       ignorePaths: ['/Volumes'],
     });
     expect(refreshSearchResults).toHaveBeenCalledTimes(1);
@@ -329,26 +370,28 @@ describe('useAppPreferences', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('start_logic', {
         watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/Volumes'],
       });
     });
 
     mockedSetWatchConfig.mockClear();
     refreshSearchResults.mockClear();
-    setWatchRoot.mockClear();
+    setWatchRoots.mockClear();
     setIgnorePaths.mockClear();
 
     act(() => {
       result.current.handleWatchConfigChange({
-        watchRoot: '/workspace', // same as before
+        watchRoots: ['/workspace'], // same as before
         ignorePaths: ['/tmp/ignore'], // different
       });
     });
 
-    expect(setWatchRoot).toHaveBeenCalledWith('/workspace');
+    expect(setWatchRoots).toHaveBeenCalledWith(['/workspace']);
     expect(setIgnorePaths).toHaveBeenCalledWith(['/tmp/ignore']);
     expect(mockedSetWatchConfig).toHaveBeenCalledWith({
       watchRoot: '/workspace',
+      watchRoots: ['/workspace'],
       ignorePaths: ['/tmp/ignore'],
     });
     expect(refreshSearchResults).toHaveBeenCalledTimes(1);
@@ -367,6 +410,7 @@ describe('useAppPreferences', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('start_logic', {
         watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/Volumes'],
       });
     });
@@ -376,7 +420,7 @@ describe('useAppPreferences', () => {
 
     act(() => {
       result.current.handleWatchConfigChange({
-        watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['**/node_modules', '.git/**'],
       });
     });
@@ -384,6 +428,7 @@ describe('useAppPreferences', () => {
     expect(setIgnorePaths).toHaveBeenCalledWith(['**/node_modules', '.git/**']);
     expect(mockedSetWatchConfig).toHaveBeenCalledWith({
       watchRoot: '/workspace',
+      watchRoots: ['/workspace'],
       ignorePaths: ['**/node_modules', '.git/**'],
     });
   });
@@ -409,24 +454,26 @@ describe('useAppPreferences', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('start_logic', {
         watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/Volumes', '/System'],
       });
     });
 
     mockedSetWatchConfig.mockClear();
     refreshSearchResults.mockClear();
-    setWatchRoot.mockClear();
+    setWatchRoots.mockClear();
     setIgnorePaths.mockClear();
 
     act(() => {
       result.current.handleWatchConfigChange({
-        watchRoot: '/workspace',
+        watchRoots: ['/workspace'],
         ignorePaths: ['/System', '/Volumes'], // same items, different order
       });
     });
 
     expect(mockedSetWatchConfig).toHaveBeenCalledWith({
       watchRoot: '/workspace',
+      watchRoots: ['/workspace'],
       ignorePaths: ['/System', '/Volumes'],
     });
     expect(refreshSearchResults).toHaveBeenCalledTimes(1);

@@ -9,6 +9,26 @@ pub enum WindowToggle {
     Failed,
 }
 
+/// 强制把本进程变成前台 app。
+///
+/// winit 的 `focus_window` 只做 `makeKeyAndOrderFront`，不会调用
+/// `NSApp.activate`，所以从托盘/全局快捷键唤起窗口后，系统菜单命令
+/// （最典型的就是 `Cmd+W` 的 `performClose:`）仍然发给上一个前台 app，
+/// 表现就是「关掉的是身后的窗口」。这里在主线程上显式激活。
+#[cfg(target_os = "macos")]
+fn activate_app_on_main_thread() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        warn!("激活 app 失败：不在主线程");
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+}
+
 pub fn activate_window<R: Runtime>(window: &WebviewWindow<R>) {
     if let Ok(true) = window.is_minimized()
         && let Err(err) = window.unminimize()
@@ -24,6 +44,11 @@ pub fn activate_window<R: Runtime>(window: &WebviewWindow<R>) {
 
     if let Err(err) = window.set_focus() {
         error!(?err, "Failed to focus window");
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Err(err) = window.app_handle().run_on_main_thread(activate_app_on_main_thread) {
+        error!(?err, "Failed to schedule app activation");
     }
 }
 

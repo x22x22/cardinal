@@ -31,8 +31,11 @@ const baseProps = {
   windowActivationShortcut: '',
   defaultWindowActivationShortcut: '',
   onWindowActivationShortcutChange: vi.fn().mockResolvedValue(undefined),
-  watchRoot: '/old/root',
-  defaultWatchRoot: '/default/root',
+  resultOpenShortcut: 'Command+O',
+  defaultResultOpenShortcut: 'Command+O',
+  onResultOpenShortcutChange: vi.fn(),
+  watchRoots: ['/old/root'],
+  defaultWatchRoots: ['/default/root'],
   ignorePaths: ['/ignore/a', '/ignore/b'],
   defaultIgnorePaths: ['/default/ignore'],
   onReset: vi.fn(),
@@ -52,7 +55,7 @@ describe('PreferencesOverlay', () => {
 
     await waitFor(() => {
       expect(onWatchConfigChange).toHaveBeenCalledWith({
-        watchRoot: '/new/root',
+        watchRoots: ['/new/root'],
         ignorePaths: baseProps.ignorePaths,
       });
     });
@@ -118,6 +121,28 @@ describe('PreferencesOverlay', () => {
     });
   });
 
+  it('records and saves a single-key result open shortcut', async () => {
+    const onResultOpenShortcutChange = vi.fn();
+    render(
+      <PreferencesOverlay {...baseProps} onResultOpenShortcutChange={onResultOpenShortcutChange} />,
+    );
+
+    const shortcutInput = screen.getByLabelText('preferences.resultOpenShortcut.label');
+    fireEvent.focus(shortcutInput);
+    fireEvent.keyDown(shortcutInput, {
+      key: 'Enter',
+      code: 'Enter',
+    });
+
+    expect(shortcutInput).toHaveValue('Enter');
+
+    fireEvent.click(screen.getByText('preferences.save'));
+
+    await waitFor(() => {
+      expect(onResultOpenShortcutChange).toHaveBeenCalledWith('Enter');
+    });
+  });
+
   it('focuses the shortcut input when recording starts', async () => {
     render(<PreferencesOverlay {...baseProps} />);
 
@@ -163,7 +188,7 @@ describe('PreferencesOverlay', () => {
 
     await waitFor(() => {
       expect(onWatchConfigChange).toHaveBeenCalledWith({
-        watchRoot: baseProps.watchRoot,
+        watchRoots: baseProps.watchRoots,
         ignorePaths: ['/tmp/one', '/tmp/two'],
       });
     });
@@ -180,7 +205,7 @@ describe('PreferencesOverlay', () => {
 
     await waitFor(() => {
       expect(onWatchConfigChange).toHaveBeenCalledWith({
-        watchRoot: baseProps.watchRoot,
+        watchRoots: baseProps.watchRoots,
         ignorePaths: ['**/node_modules', '.git/**'],
       });
     });
@@ -220,7 +245,12 @@ describe('PreferencesOverlay', () => {
     expect(screen.getByLabelText('preferences.windowActivationShortcut.label')).toHaveValue(
       baseProps.defaultWindowActivationShortcut,
     );
-    expect(screen.getByLabelText('watchRoot.label')).toHaveValue(baseProps.defaultWatchRoot);
+    expect(screen.getByLabelText('preferences.resultOpenShortcut.label')).toHaveValue(
+      baseProps.defaultResultOpenShortcut,
+    );
+    expect(screen.getByLabelText('watchRoot.label')).toHaveValue(
+      baseProps.defaultWatchRoots.join('\n'),
+    );
     expect(screen.getByLabelText('ignorePaths.label')).toHaveValue(
       baseProps.defaultIgnorePaths.join('\n'),
     );

@@ -376,6 +376,14 @@ fn test_relative_path_glob_combines_with_extension_filter() {
         .collect();
 
     assert_eq!(paths.len(), 2);
-    assert!(paths.iter().any(|path| path == &tmp.path().join("packages/app/src/main.ts")));
-    assert!(paths.iter().any(|path| path == &tmp.path().join("packages/app/src/main.tsx")));
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == &tmp.path().join("packages/app/src/main.ts"))
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == &tmp.path().join("packages/app/src/main.tsx"))
+    );
 }

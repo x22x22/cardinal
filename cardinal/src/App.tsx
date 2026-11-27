@@ -55,6 +55,8 @@ function App() {
     handleStatusUpdate,
     setLifecycleState,
     requestRescan,
+    loadMore,
+    hasMore,
   } = useFileSearch();
   const {
     results,
@@ -63,8 +65,10 @@ function App() {
     processedEvents,
     rescanErrors,
     currentQuery,
+    hasQuery,
     highlightTerms,
     showLoadingUI,
+    indexing,
     initialFetchCompleted,
     durationMs,
     resultCount,
@@ -224,7 +228,25 @@ function App() {
       });
     },
     onSearchInputKeyDownOverride: (event) => {
-      if (!(activeTab === 'files' && autocompleteSuggestions.length > 0)) {
+      if (activeTab !== 'files') {
+        return false;
+      }
+
+      if (
+        (event.key === 'ArrowDown' || event.key === 'ArrowUp') &&
+        displayedResults.length > 0 &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.ctrlKey
+      ) {
+        event.preventDefault();
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        virtualListRef.current?.focus();
+        moveSelection(delta, { extend: event.shiftKey });
+        return true;
+      }
+
+      if (autocompleteSuggestions.length === 0) {
         return false;
       }
 
@@ -325,8 +347,11 @@ function App() {
     windowActivationShortcut,
     defaultWindowActivationShortcut,
     handleWindowActivationShortcutChange,
-    watchRoot,
-    defaultWatchRoot,
+    resultOpenShortcut,
+    defaultResultOpenShortcut,
+    handleResultOpenShortcutChange,
+    watchRoots,
+    defaultWatchRoots,
     ignorePaths,
     defaultIgnorePaths,
     preferencesResetToken,
@@ -359,6 +384,7 @@ function App() {
     focusSearchInput,
     navigateSelection,
     triggerQuickLook,
+    resultOpenShortcut,
   });
 
   useFilesTabEffects({
@@ -451,6 +477,8 @@ function App() {
     if (!initialFetchCompleted) return 'loading';
     if (showLoadingUI) return 'loading';
     if (searchError) return 'error';
+    // 没有查询词时不是「没有匹配结果」，而是还没开始搜索。
+    if (!hasQuery) return 'idle';
     if (results.length === 0) return 'empty';
     return 'results';
   })();
@@ -486,35 +514,45 @@ function App() {
   const searchHelp = activeTab === 'files' ? t('search.help.files') : t('search.help.events');
   const filterButtonLabel = t('search.filters.toggle');
   const filterButtonTitle = t('search.filters.toggleTitle');
-  const effectiveWatchRoot = watchRoot ?? defaultWatchRoot;
+  const effectiveWatchRoots = watchRoots ?? defaultWatchRoots;
   const isFilesTabActive = activeTab === 'files';
   const pathSuggestions = buildPathSuggestions(
     filters.pathInput || keywordInput,
-    effectiveWatchRoot,
+    effectiveWatchRoots[0] ?? '/',
   );
   const autocompleteSuggestions = useMemo(
     () =>
       isFilesTabActive
         ? [
             ...getSearchAutocompleteSuggestions(keywordInput, autocompleteConfig),
-            ...getPathAutocompleteSuggestions(keywordInput, effectiveWatchRoot, recentPaths),
+            ...getPathAutocompleteSuggestions(
+              keywordInput,
+              effectiveWatchRoots[0] ?? '/',
+              recentPaths,
+            ),
           ]
         : [],
-    [autocompleteConfig, effectiveWatchRoot, isFilesTabActive, keywordInput, recentPaths],
+    [
+      autocompleteConfig,
+      effectiveWatchRoots[0] ?? '/',
+      isFilesTabActive,
+      keywordInput,
+      recentPaths,
+    ],
   );
 
   const handleOpenPathPicker = useCallback(async () => {
     const selected = await open({
       directory: true,
       multiple: false,
-      defaultPath: effectiveWatchRoot,
+      defaultPath: effectiveWatchRoots[0] ?? '/',
     });
     if (typeof selected !== 'string' || selected.length === 0) {
       return;
     }
     setPathInput(selected);
     rememberCurrentPath(selected);
-  }, [effectiveWatchRoot, rememberCurrentPath, setPathInput]);
+  }, [effectiveWatchRoots[0] ?? '/', rememberCurrentPath, setPathInput]);
 
   const permissionSteps = [
     t('app.fullDiskAccess.steps.one'),
@@ -609,6 +647,8 @@ function App() {
               displayState={displayState}
               searchErrorMessage={searchErrorMessage}
               currentQuery={currentQuery}
+              indexing={indexing}
+              scannedFiles={scannedFiles}
               virtualListRef={virtualListRef}
               results={displayedResults}
               dataResultsVersion={resultsVersion}
@@ -617,6 +657,7 @@ function App() {
               overscan={OVERSCAN_ROW_COUNT}
               renderRow={renderRow}
               onScrollSync={handleHorizontalSync}
+              onEndReached={loadMore}
               sortState={sortState}
               onSortToggle={handleSortToggle}
               sortDisabled={sortButtonsDisabled}
@@ -649,8 +690,11 @@ function App() {
         windowActivationShortcut={windowActivationShortcut}
         defaultWindowActivationShortcut={defaultWindowActivationShortcut}
         onWindowActivationShortcutChange={handleWindowActivationShortcutChange}
-        watchRoot={watchRoot ?? defaultWatchRoot}
-        defaultWatchRoot={defaultWatchRoot}
+        resultOpenShortcut={resultOpenShortcut}
+        defaultResultOpenShortcut={defaultResultOpenShortcut}
+        onResultOpenShortcutChange={handleResultOpenShortcutChange}
+        watchRoots={watchRoots ?? defaultWatchRoots}
+        defaultWatchRoots={defaultWatchRoots}
         onWatchConfigChange={handleWatchConfigChange}
         ignorePaths={ignorePaths}
         defaultIgnorePaths={defaultIgnorePaths}

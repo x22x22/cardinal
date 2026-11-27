@@ -17,6 +17,9 @@ type FilesTabContentProps = {
   displayState: DisplayState;
   searchErrorMessage: string | null;
   currentQuery: string;
+  /** 索引尚未就绪；`idle` 态据此展示构建进度。 */
+  indexing?: boolean;
+  scannedFiles?: number;
   virtualListRef: React.Ref<VirtualListHandle>;
   results: SlabIndex[];
   // Bumps when backend search results change; useDataLoader treats it as a data-cache reset.
@@ -31,6 +34,7 @@ type FilesTabContentProps = {
     rowStyle: CSSProperties,
   ) => ReactNode;
   onScrollSync: (scrollLeft: number) => void;
+  onEndReached?: () => void;
   sortState: SortState;
   onSortToggle: (sortKey: SortKey) => void;
   sortDisabled: boolean;
@@ -44,6 +48,8 @@ export function FilesTabContent({
   displayState,
   searchErrorMessage,
   currentQuery,
+  indexing,
+  scannedFiles,
   virtualListRef,
   results,
   dataResultsVersion,
@@ -52,6 +58,7 @@ export function FilesTabContent({
   overscan,
   renderRow,
   onScrollSync,
+  onEndReached,
   sortState,
   onSortToggle,
   sortDisabled,
@@ -70,7 +77,13 @@ export function FilesTabContent({
       />
       <div className="flex-fill">
         {displayState !== 'results' ? (
-          <StateDisplay state={displayState} message={searchErrorMessage} query={currentQuery} />
+          <StateDisplay
+            state={displayState}
+            message={searchErrorMessage}
+            query={currentQuery}
+            indexing={indexing}
+            scannedFiles={scannedFiles}
+          />
         ) : (
           <VirtualList
             ref={virtualListRef}
@@ -81,6 +94,7 @@ export function FilesTabContent({
             overscan={overscan}
             renderRow={renderRow}
             onScrollSync={onScrollSync}
+            onEndReached={onEndReached}
           />
         )}
       </div>

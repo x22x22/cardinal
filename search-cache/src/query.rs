@@ -1048,34 +1048,34 @@ enum TypeFilterTarget {
 
 fn lookup_type_group(name: &str) -> Option<TypeFilterTarget> {
     match name {
-        "file" | "files" => Some(TypeFilterTarget::NodeType(NodeFileType::File)),
-        "folder" | "folders" | "dir" | "directory" => {
+        "file" | "files" | "文件" => Some(TypeFilterTarget::NodeType(NodeFileType::File)),
+        "folder" | "folders" | "dir" | "directory" | "文件夹" | "目录" | "文件夹类型" => {
             Some(TypeFilterTarget::NodeType(NodeFileType::Dir))
         }
-        "picture" | "pictures" | "image" | "images" | "photo" | "photos" => {
-            Some(TypeFilterTarget::Extensions(PICTURE_EXTENSIONS))
-        }
-        "video" | "videos" | "movie" | "movies" => {
+        "picture" | "pictures" | "image" | "images" | "photo" | "photos" | "图片" | "图像"
+        | "照片" | "相片" => Some(TypeFilterTarget::Extensions(PICTURE_EXTENSIONS)),
+        "video" | "videos" | "movie" | "movies" | "视频" | "影片" => {
             Some(TypeFilterTarget::Extensions(VIDEO_EXTENSIONS))
         }
-        "audio" | "audios" | "music" | "song" | "songs" => {
+        "audio" | "audios" | "music" | "song" | "songs" | "音频" | "音乐" | "歌曲" => {
             Some(TypeFilterTarget::Extensions(AUDIO_EXTENSIONS))
         }
-        "doc" | "docs" | "document" | "documents" | "text" | "office" => {
-            Some(TypeFilterTarget::Extensions(DOCUMENT_EXTENSIONS))
-        }
-        "presentation" | "presentations" | "ppt" | "slides" => {
+        "doc" | "docs" | "document" | "documents" | "text" | "office" | "文档" | "文本"
+        | "办公文档" => Some(TypeFilterTarget::Extensions(DOCUMENT_EXTENSIONS)),
+        "presentation" | "presentations" | "ppt" | "slides" | "演示文稿" | "幻灯片" => {
             Some(TypeFilterTarget::Extensions(PRESENTATION_EXTENSIONS))
         }
-        "spreadsheet" | "spreadsheets" | "xls" | "excel" | "sheet" | "sheets" => {
-            Some(TypeFilterTarget::Extensions(SPREADSHEET_EXTENSIONS))
-        }
+        "spreadsheet" | "spreadsheets" | "xls" | "excel" | "sheet" | "sheets" | "电子表格"
+        | "表格" => Some(TypeFilterTarget::Extensions(SPREADSHEET_EXTENSIONS)),
         "pdf" => Some(TypeFilterTarget::Extensions(PDF_EXTENSIONS)),
-        "archive" | "archives" | "compressed" | "zip" => {
+        "archive" | "archives" | "compressed" | "zip" | "压缩包" | "压缩文件" => {
             Some(TypeFilterTarget::Extensions(ARCHIVE_EXTENSIONS))
         }
-        "code" | "source" | "dev" => Some(TypeFilterTarget::Extensions(CODE_EXTENSIONS)),
-        "exe" | "exec" | "executable" | "executables" | "program" | "programs" | "app" | "apps" => {
+        "code" | "source" | "dev" | "代码" | "源码" => {
+            Some(TypeFilterTarget::Extensions(CODE_EXTENSIONS))
+        }
+        "exe" | "exec" | "executable" | "executables" | "program" | "programs" | "app" | "apps"
+        | "可执行文件" | "程序" | "应用程序" => {
             Some(TypeFilterTarget::Extensions(EXECUTABLE_EXTENSIONS))
         }
         _ => None,
@@ -1658,4 +1658,70 @@ fn union_in_place(
         }
     }
     Some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 断言中文类型名与英文类型名解析到完全相同的分组目标。
+    fn assert_same_type_group(chinese: &str, english: &str) {
+        let chinese_target =
+            lookup_type_group(chinese).unwrap_or_else(|| panic!("中文类型名 {chinese:?} 应被识别"));
+        let english_target =
+            lookup_type_group(english).unwrap_or_else(|| panic!("英文类型名 {english:?} 应被识别"));
+        match (chinese_target, english_target) {
+            (TypeFilterTarget::NodeType(left), TypeFilterTarget::NodeType(right)) => {
+                assert_eq!(left, right, "{chinese:?} 应与 {english:?} 同为节点类型过滤");
+            }
+            (TypeFilterTarget::Extensions(left), TypeFilterTarget::Extensions(right)) => {
+                assert_eq!(left, right, "{chinese:?} 应与 {english:?} 同为扩展名分组");
+            }
+            _ => panic!("{chinese:?} 与 {english:?} 的类型分组目标不一致"),
+        }
+    }
+
+    #[test]
+    fn chinese_type_folder_matches_folder_group() {
+        assert_same_type_group("文件夹", "folder");
+        assert_same_type_group("目录", "dir");
+        assert_same_type_group("文件夹类型", "folder");
+        assert!(matches!(
+            lookup_type_group("文件夹"),
+            Some(TypeFilterTarget::NodeType(NodeFileType::Dir))
+        ));
+    }
+
+    #[test]
+    fn chinese_type_file_matches_file_group() {
+        assert_same_type_group("文件", "file");
+        assert!(matches!(
+            lookup_type_group("文件"),
+            Some(TypeFilterTarget::NodeType(NodeFileType::File))
+        ));
+    }
+
+    #[test]
+    fn chinese_type_categories_match_english_categories() {
+        for (chinese, english) in [
+            ("图片", "picture"),
+            ("照片", "photo"),
+            ("视频", "video"),
+            ("音频", "audio"),
+            ("音乐", "music"),
+            ("文档", "document"),
+            ("电子表格", "spreadsheet"),
+            ("压缩包", "archive"),
+            ("代码", "code"),
+            ("可执行文件", "executable"),
+        ] {
+            assert_same_type_group(chinese, english);
+        }
+    }
+
+    #[test]
+    fn unknown_type_names_stay_unknown() {
+        assert!(lookup_type_group("不存在的类型").is_none());
+        assert!(lookup_type_group("").is_none());
+    }
 }
