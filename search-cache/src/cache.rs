@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use cardinal_sdk::{EventFlag, FsEvent, ScanType, current_event_id};
-use cardinal_syntax::{Expr, Term, optimize_query, parse_query};
+use cardinal_syntax::{optimize_query, parse_query};
 use fswalk::{
     Node, NodeMetadata, WalkData, should_ignore_path_with_matcher, walk_it,
     walk_it_without_root_chain,
@@ -63,11 +63,6 @@ impl SearchOutcome {
 
     fn is_cancelled(&self) -> bool {
         self.nodes.is_none()
-    }
-
-    /// 搜索已完成且没有任何命中（区别于「被取消」）。
-    fn is_empty(&self) -> bool {
-        self.nodes.as_ref().is_some_and(|nodes| nodes.is_empty())
     }
 
     fn merge(self, other: Self) -> Self {
@@ -305,22 +300,6 @@ impl SearchCache {
             return Ok(SearchOutcome::cancelled());
         }
 
-        // 相对路径兜底：`dist/x.dmg` 这类不带 `/` 开头的输入会先被当作「相对监控根」的
-        // 路径展开。当文件其实比监控根深一层时（根是 `project`，文件在 `project/app/dist/`），
-        // 展开出的绝对路径对不上，精确查询会 0 命中。这时再按「路径后缀」重搜一次，
-        // 等价于用户写了 `**/dist/x.dmg`。只在零命中时触发，精确路径的语义与开销都不受影响。
-        let primary = match self.relative_path_suffix_query(line) {
-            Some(alt_line) if primary.is_empty() => {
-                let fallback =
-                    self.search_with_query_line(&alt_line, options, cancellation_token)?;
-                if fallback.is_cancelled() {
-                    return Ok(SearchOutcome::cancelled());
-                }
-                primary.merge(fallback)
-            }
-            _ => primary,
-        };
-
         // Best-effort APFS workaround: run primary query first, then optionally
         // run one alternate normalization form when the input is normalization-sensitive.
         let Some(alt_line) = self.alternate_normalization_query(line) else {
@@ -329,24 +308,6 @@ impl SearchCache {
 
         let secondary = self.search_with_query_line(&alt_line, options, cancellation_token)?;
         Ok(primary.merge(secondary))
-    }
-
-    /// 为「含 `/` 但不以 `/`、`~` 开头的相对路径词项」构造一条路径后缀查询。
-    ///
-    /// 做法是在原词项前补一个 `/`：分词器看到前导 `/` 会保持首段为 `Exact` 而不是转成
-    /// `Suffix`，于是 `dist/x.dmg` 变成「任意深度下的 dist/x.dmg」——也就是用户期望的
-    /// 路径后缀匹配。只在整个查询就是一个这样的词项时生效，避免影响复合查询、引号短语
-    /// 和过滤器，因此不会改变任何既有语义，也不会带来额外搜索。
-    fn relative_path_suffix_query(&self, line: &str) -> Option<String> {
-        let parsed = parse_query(line).ok()?;
-        let Expr::Term(Term::Word(word)) = &parsed.expr else {
-            return None;
-        };
-        let trimmed = word.trim();
-        if trimmed.starts_with('/') || trimmed.starts_with('~') || !trimmed.contains('/') {
-            return None;
-        }
-        Some(format!("/{trimmed}"))
     }
 
     fn search_with_query_line(
@@ -3143,11 +3104,10 @@ mod tests {
         assert!(infolder_results[0].path.ends_with("nested/child.txt"));
     }
 
-    // 不带 `/` 开头的相对路径（如 `dist/xxx`）会先按「相对监控根」展开成绝对路径。
-    // 当文件比监控根深一层时（`root/cardinal/dist/x` 而输入是 `dist/x`），展开后路径
-    // 前缀对不上，必须回退到「路径后缀匹配」才能命中，否则用户看到的是一条空白结果。
+    // 不带 `/` 开头的路径（如 `dist/xxx`）按路径段匹配：首段后缀、末段前缀。
+    // 所以文件比监控根深一层（`root/cardinal/dist/x` 而输入 `dist/x`）也能命中。
     #[test]
-    fn test_relative_path_falls_back_to_suffix_match() {
+    fn test_relative_path_matches_by_segment() {
         let temp_dir = TempDir::new("relpath_fallback").unwrap();
         let root = temp_dir.path();
         fs::create_dir_all(root.join("cardinal/dist")).unwrap();
@@ -3156,7 +3116,7 @@ mod tests {
 
         let mut cache = SearchCache::walk_fs(root);
 
-        // 精确相对路径：展开后正好等于真实路径，必须命中
+        // 完整相对路径同样按段匹配，必须命中
         let exact = query(&mut cache, "cardinal/dist/Cardinal_0.1.23_aarch64.dmg");
         assert_eq!(exact.len(), 1, "精确相对路径应命中");
 
@@ -3179,7 +3139,7 @@ mod tests {
     }
 
     #[test]
-    fn test_suffix_fallback_does_not_mask_non_matches() {
+    fn test_segment_matching_does_not_create_false_positives() {
         let temp_dir = TempDir::new("relpath_fallback_neg").unwrap();
         let root = temp_dir.path();
         fs::create_dir_all(root.join("cardinal/dist")).unwrap();
